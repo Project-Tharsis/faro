@@ -4,6 +4,7 @@ import sys
 from faro.scanner import scan_directory, scan_staging
 from faro.reporter import to_text, to_json, summary_line
 from faro.staged import list_staged, approve, reject, purge_staging
+from faro.manifest import add_to_manifest, remove_from_manifest, find_unvetted, load_manifest, init_manifest
 
 
 def cmd_scan(args: list[str]):
@@ -69,12 +70,59 @@ def cmd_prune(args: list[str]):
     purge_staging(kind=kind)
 
 
+def cmd_vet(args: list[str]):
+    """Vet an already-active skill/plugin — add to manifest."""
+    if not args:
+        print("Usage: faro vet <name> [--kind skill|plugin] [--path <path>]")
+        return
+    name = args[0]; kind = "skill"; path = None
+    for i, a in enumerate(args):
+        if a == "--kind" and i + 1 < len(args):
+            kind = args[i + 1]
+        if a == "--path" and i + 1 < len(args):
+            path = args[i + 1]
+    if not path:
+        from pathlib import Path
+        home = Path.home()
+        if kind == "skill":
+            path = str(home / ".hermes" / "skills" / name)
+        else:
+            path = str(home / ".hermes" / "hermes-agent" / "plugins" / name)
+    if not Path(path).exists():
+        print(f"❌ Path not found: {path}")
+        return
+    add_to_manifest(name, path, kind)
+    print(f"✅ Vetted: {kind}/{name}")
+
+
+def cmd_check(args: list[str]):
+    """Check active skills/plugins against manifest."""
+    unvetted = find_unvetted()
+    if not unvetted:
+        print("✅ All active skills/plugins are in the manifest.")
+        return
+    print(f"⚠️  {len(unvetted)} unvetted item(s) found:\n")
+    for u in unvetted:
+        print(f"  🔴 [{u['kind']:6s}] {u['name']}")
+        print(f"      {u['path']}")
+        print(f"      → faro vet {u['name']} --kind {u['kind']}")
+
+
+def cmd_init_manifest(args: list[str]):
+    """Initialize manifest with all currently active skills/plugins."""
+    count = init_manifest()
+    print(f"✅ Manifest initialized — {count} items whitelisted")
+
+
 COMMANDS = {
     "scan": (cmd_scan, "Scan a skill/plugin or all staged (--staged)"),
     "list": (cmd_list, "List staged items"),
-    "approve": (cmd_approve, "Approve staged → active"),
-    "reject": (cmd_reject, "Reject staged → delete"),
+    "approve": (cmd_approve, "Approve staged → active (+ manifest)"),
+    "reject": (cmd_reject, "Reject staged → delete (- manifest)"),
     "prune": (cmd_prune, "Purge all staging"),
+    "vet": (cmd_vet, "Add active skill/plugin to manifest"),
+    "check": (cmd_check, "Find active items NOT in manifest"),
+    "init-manifest": (cmd_init_manifest, "Seed manifest with all active items"),
 }
 
 

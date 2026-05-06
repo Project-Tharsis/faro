@@ -3,6 +3,7 @@
 from pathlib import Path
 import shutil
 from faro.scanner import scan_directory
+from faro.manifest import add_to_manifest, remove_from_manifest
 
 
 def _get_dirs() -> tuple[Path, Path, Path, Path]:
@@ -43,6 +44,7 @@ def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
             return None
         shutil.rmtree(dst)
     shutil.move(str(src), str(dst))
+    add_to_manifest(name, str(dst), kind)
     print(f"✅ Approved: {kind}/{name} → active ({result.risk_level}, {len(result.findings)} findings)")
     return str(dst)
 
@@ -54,6 +56,7 @@ def reject(name: str, kind: str = "skill") -> bool:
         print(f"❌ '{name}' not found in {kind}s staging")
         return False
     shutil.rmtree(target)
+    remove_from_manifest(name)
     print(f"🗑️  Rejected: {kind}/{name} deleted")
     return True
 

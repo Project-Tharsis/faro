@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Faro pre_llm_call hook — warns agent about unapproved staged items.
+"""Faro pre_llm_call hook — warns agent about unapproved or unvetted items.
 
-Hermes passes conversation context as JSON on stdin.
-We inject a warning if unapproved staged skills/plugins exist.
+Checks:
+  1. Staging dirs — unapproved staged items
+  2. Active dirs vs manifest — skills/plugins not in the vetted manifest
 """
 
-import json, sys
+import json
+import sys
 from pathlib import Path
+from faro.manifest import find_unvetted
 
 
 def check_staging() -> list[dict]:
@@ -20,7 +23,7 @@ def check_staging() -> list[dict]:
             continue
         for item in staging_dir.iterdir():
             if item.is_dir() and not item.name.startswith("."):
-                items.append({"name": item.name, "kind": kind, "path": str(item)})
+                items.append({"name": item.name, "kind": kind})
     return items
 
 
@@ -30,19 +33,26 @@ def main():
     except (json.JSONDecodeError, EOFError):
         sys.exit(0)
 
-    staged = check_staging()
-    if not staged:
-        sys.exit(0)
-
     platform = hook_input.get("extra", {}).get("platform", "")
     if platform != "feishu":
         sys.exit(0)
 
-    names = ", ".join(f"`{s['name']}`({s['kind']})" for s in staged)
-    warning = (
-        f"\n\n⚠️ **FARO** — unapproved staged: {names}\n"
-        f"Do NOT load these. Run `faro list` to review, `faro approve <name>` to activate.\n"
-    )
+    staged = check_staging()
+    unvetted = find_unvetted()
+    warnings = []
+
+    if staged:
+        names = ", ".join(f"`{s['name']}`({s['kind']})" for s in staged)
+        warnings.append(f"staged: {names}. Run `faro list` / `faro approve <name>`.")
+
+    if unvetted:
+        names = ", ".join(f"`{u['name']}`({u['kind']})" for u in unvetted)
+        warnings.append(f"unvetted: {names}. Run `faro check` / `faro vet <name>`.")
+
+    if not warnings:
+        sys.exit(0)
+
+    warning = "\n\n⚠️ **FARO** — " + " | ".join(warnings) + "\nDo NOT load these until they pass `faro scan`.\n"
 
     messages = hook_input.get("messages", [])
     if messages:
