@@ -57,6 +57,7 @@ Hook (pre_llm_call) warns if unapproved items detected in staging or active.
 | `faro list` | List staged items with risk levels |
 | `faro approve <name>` | Approve staged item → move to active |
 | `faro reject <name>` | Reject staged item → delete |
+| `faro prune --all` | Purge all staging (both skills + plugins) |
 | `faro vet <name>` | Add already-active item to manifest |
 | `faro check` | Find active items not in manifest |
 | `faro check --deep` | Also verify content hashes |
