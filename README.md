@@ -69,7 +69,7 @@ Add to `~/.hermes/config.yaml`:
 ```yaml
 hooks:
   pre_llm_call:
-    - command: "python ~/faro/src/faro/hook.py"
+    - command: "python -m faro.hook"
 hooks_auto_accept: true
 ```
 

@@ -59,7 +59,13 @@ def _find_files(root: Path, extensions: set[str]) -> list[Path]:
 def scan_directory(path: str) -> ScanResult:
     root = Path(path).resolve()
     name = root.name
-    skill_type = "plugin" if "plugin" in str(root).lower() else "skill"
+    # Infer type from marker files, not path string
+    if (root / "SKILL.md").exists():
+        skill_type = "skill"
+    elif (root / "plugin.yaml").exists() or (root / "__init__.py").exists():
+        skill_type = "plugin"
+    else:
+        skill_type = "unknown"
     result = ScanResult(path=str(root), name=name, skill_type=skill_type)
 
     all_files = _find_files(root, _TEXT_EXTS)
@@ -129,7 +135,13 @@ def scan_staging(skills_staging: str = None, plugins_staging: str = None) -> lis
     for staging_dir in [skills_staging, plugins_staging]:
         if not staging_dir.exists():
             continue
-        for item in sorted(staging_dir.iterdir()):
-            if item.is_dir() and not item.name.startswith("."):
+        # Recursive: find all SKILL.md / plugin marker dirs
+        for item in sorted(staging_dir.rglob("*")):
+            if not item.is_dir() or item.name.startswith("."):
+                continue
+            if "__pycache__" in item.parts:
+                continue
+            # Skill: has SKILL.md; Plugin: has plugin.yaml or __init__.py
+            if (item / "SKILL.md").exists() or (item / "plugin.yaml").exists() or (item / "__init__.py").exists():
                 results.append(scan_directory(str(item)))
     return results

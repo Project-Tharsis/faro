@@ -4,6 +4,9 @@
 Checks:
   1. Staging dirs — unapproved staged items
   2. Active dirs vs manifest — skills/plugins not in the vetted manifest
+
+On Feishu: injects warning into conversation context (the user sees it).
+On other platforms: writes to stderr for log visibility only.
 """
 
 import json
@@ -33,26 +36,31 @@ def main():
     except (json.JSONDecodeError, EOFError):
         sys.exit(0)
 
-    platform = hook_input.get("extra", {}).get("platform", "")
-    if platform != "feishu":
-        sys.exit(0)
-
     staged = check_staging()
     unvetted = find_unvetted()
-    warnings = []
 
+    if not staged and not unvetted:
+        sys.exit(0)
+
+    warnings = []
     if staged:
         names = ", ".join(f"`{s['name']}`({s['kind']})" for s in staged)
         warnings.append(f"staged: {names}. Run `faro list` / `faro approve <name>`.")
-
     if unvetted:
         names = ", ".join(f"`{u['name']}`({u['kind']})" for u in unvetted)
         warnings.append(f"unvetted: {names}. Run `faro check` / `faro vet <name>`.")
 
-    if not warnings:
+    warning_text = " | ".join(warnings)
+    platform = hook_input.get("extra", {}).get("platform", "")
+
+    if platform and platform != "feishu":
+        # Non-Feishu: log to stderr only (no conversation injection)
+        sys.stderr.write(f"[faro] {warning_text}\n")
+        sys.stderr.flush()
         sys.exit(0)
 
-    warning = "\n\n⚠️ **FARO** — " + " | ".join(warnings) + "\nDo NOT load these until they pass `faro scan`.\n"
+    # Feishu or unknown platform: inject into conversation
+    warning = f"\n\n⚠️ **FARO** — {warning_text}\nDo NOT load these until they pass `faro scan`.\n"
 
     messages = hook_input.get("messages", [])
     if messages:

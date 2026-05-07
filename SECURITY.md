@@ -52,6 +52,14 @@ skills through Faro's issue tracker — report those to the skill author.
 
 For urgent issues, contact the maintainer directly.
 
+## Platform Support
+
+The pre_llm_call hook injects warnings into the conversation on **Feishu**.
+On other platforms (Telegram, Discord, CLI, etc.), it writes to stderr for
+log visibility only — no conversation injection. This is because the hook
+needs the user to be able to act on the alert, and Feishu is the primary
+interactive platform for Faro's maintainers.
+
 ## Known Limitations
 
 1. Regex patterns can produce false positives (e.g., documentation

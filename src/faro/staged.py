@@ -12,36 +12,59 @@ def _get_dirs() -> tuple[Path, Path, Path, Path]:
             home / ".hermes" / "plugins-staging", home / ".hermes" / "hermes-agent" / "plugins")
 
 
+def _find_staged_items(staging_dir: Path) -> list[Path]:
+    """Recursively find skill/plugin dirs in staging (mirrors active conventions)."""
+    items = []
+    for item in sorted(staging_dir.rglob("*")):
+        if not item.is_dir() or item.name.startswith("."):
+            continue
+        if "__pycache__" in item.parts:
+            continue
+        if (item / "SKILL.md").exists() or (item / "plugin.yaml").exists() or (item / "__init__.py").exists():
+            items.append(item)
+    return items
+
+
 def list_staged() -> list[dict]:
     skills_staging, _, plugins_staging, _ = _get_dirs()
     items = []
     for staging_dir, kind in [(skills_staging, "skill"), (plugins_staging, "plugin")]:
         if not staging_dir.exists():
             continue
-        for item in sorted(staging_dir.iterdir()):
-            if item.is_dir() and not item.name.startswith("."):
-                r = scan_directory(str(item))
-                items.append({"name": item.name, "path": str(item), "kind": kind,
-                              "risk_level": r.risk_level, "critical": r.critical_count,
-                              "high": r.high_count, "medium": r.medium_count})
+        for item in _find_staged_items(staging_dir):
+            r = scan_directory(str(item))
+            items.append({"name": item.name, "path": str(item), "kind": kind,
+                          "risk_level": r.risk_level, "critical": r.critical_count,
+                          "high": r.high_count, "medium": r.medium_count})
     return items
 
 
 def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
     skills_staging, skills_active, plugins_staging, plugins_active = _get_dirs()
-    src = (skills_staging if kind == "skill" else plugins_staging) / name
-    dst = (skills_active if kind == "skill" else plugins_active) / name
-    if not src.exists():
+    staging_dir = skills_staging if kind == "skill" else plugins_staging
+    active_dir = skills_active if kind == "skill" else plugins_active
+
+    # Search recursively for the named item
+    src = None
+    for item in _find_staged_items(staging_dir):
+        if item.name == name:
+            src = item
+            break
+    if src is None:
         print(f"❌ '{name}' not found in {kind}s staging")
         return None
+
+    dst = active_dir / name
+    if not force and dst.exists():
+        print(f"⚠️  '{name}' already active. Use --force to overwrite.")
+        return None
+
     result = scan_directory(str(src))
     if result.risk_level in ("critical", "high") and not force:
         print(f"🔴 '{name}' has {result.risk_level} risk ({result.critical_count}C/{result.high_count}H). Use --force.")
         return None
+
     if dst.exists():
-        if not force:
-            print(f"⚠️  '{name}' already active. Use --force to overwrite.")
-            return None
         shutil.rmtree(dst)
     shutil.move(str(src), str(dst))
     add_to_manifest(name, str(dst), kind)
@@ -51,10 +74,18 @@ def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
 
 def reject(name: str, kind: str = "skill") -> bool:
     skills_staging, _, plugins_staging, _ = _get_dirs()
-    target = (skills_staging if kind == "skill" else plugins_staging) / name
-    if not target.exists():
+    staging_dir = skills_staging if kind == "skill" else plugins_staging
+
+    # Search recursively
+    target = None
+    for item in _find_staged_items(staging_dir):
+        if item.name == name:
+            target = item
+            break
+    if target is None:
         print(f"❌ '{name}' not found in {kind}s staging")
         return False
+
     shutil.rmtree(target)
     remove_from_manifest(name, kind)
     print(f"🗑️  Rejected: {kind}/{name} deleted")
@@ -69,9 +100,8 @@ def purge_staging(kind: str = "all") -> int:
             continue
         if not staging_dir.exists():
             continue
-        for item in staging_dir.iterdir():
-            if item.is_dir() and not item.name.startswith("."):
-                shutil.rmtree(item)
-                count += 1
+        for item in _find_staged_items(staging_dir):
+            shutil.rmtree(item)
+            count += 1
     print(f"🗑️  Purged {count} items from staging")
     return count
