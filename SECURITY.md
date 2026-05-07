@@ -69,6 +69,18 @@ interactive platform for Faro's maintainers.
 3. Manifest atomicity is best-effort — concurrent writes from multiple
    processes may race (single-user design)
 
+## Development Safety
+
+**Tests are isolated.** All integration tests (`tests/test_staging.py`) use
+a `FARO_HOME` environment variable to redirect `.hermes/` paths to a
+`tempfile.TemporaryDirectory`. Real `~/.hermes` is never touched during
+`pytest`. Contributors can run the full suite locally without risk.
+
+To manually override the home directory:
+```bash
+FARO_HOME=/tmp/faro-test faro scan --staged
+```
+
 ## Version
 
 Faro 0.x — no stability guarantees. The manifest schema, CLI interface,
