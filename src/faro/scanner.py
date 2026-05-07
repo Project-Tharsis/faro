@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 from faro.patterns import ScanPattern, PATTERNS
+from faro.manifest import _find_skill_dirs
 
 
 @dataclass
@@ -132,16 +133,9 @@ def scan_staging(skills_staging: str = None, plugins_staging: str = None) -> lis
     skills_staging = Path(skills_staging) if skills_staging else home / ".hermes" / "skills-staging"
     plugins_staging = Path(plugins_staging) if plugins_staging else home / ".hermes" / "plugins-staging"
     results = []
-    for staging_dir in [skills_staging, plugins_staging]:
+    for staging_dir, kind in [(skills_staging, "skill"), (plugins_staging, "plugin")]:
         if not staging_dir.exists():
             continue
-        # Recursive: find all SKILL.md / plugin marker dirs
-        for item in sorted(staging_dir.rglob("*")):
-            if not item.is_dir() or item.name.startswith("."):
-                continue
-            if "__pycache__" in item.parts:
-                continue
-            # Skill: has SKILL.md; Plugin: has plugin.yaml or __init__.py
-            if (item / "SKILL.md").exists() or (item / "plugin.yaml").exists() or (item / "__init__.py").exists():
-                results.append(scan_directory(str(item)))
+        for item in _find_skill_dirs(staging_dir, kind=kind):
+            results.append(scan_directory(str(item)))
     return results

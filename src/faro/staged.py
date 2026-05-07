@@ -3,7 +3,7 @@
 from pathlib import Path
 import shutil
 from faro.scanner import scan_directory
-from faro.manifest import add_to_manifest, remove_from_manifest
+from faro.manifest import add_to_manifest, remove_from_manifest, _find_skill_dirs
 
 
 def _get_dirs() -> tuple[Path, Path, Path, Path]:
@@ -12,17 +12,9 @@ def _get_dirs() -> tuple[Path, Path, Path, Path]:
             home / ".hermes" / "plugins-staging", home / ".hermes" / "hermes-agent" / "plugins")
 
 
-def _find_staged_items(staging_dir: Path) -> list[Path]:
-    """Recursively find skill/plugin dirs in staging (mirrors active conventions)."""
-    items = []
-    for item in sorted(staging_dir.rglob("*")):
-        if not item.is_dir() or item.name.startswith("."):
-            continue
-        if "__pycache__" in item.parts:
-            continue
-        if (item / "SKILL.md").exists() or (item / "plugin.yaml").exists() or (item / "__init__.py").exists():
-            items.append(item)
-    return items
+def _find_staged_items(staging_dir: Path, kind: str) -> list[Path]:
+    """Recursively find skill/plugin dirs in staging, using kind-aware logic."""
+    return _find_skill_dirs(staging_dir, kind=kind)
 
 
 def list_staged() -> list[dict]:
@@ -31,7 +23,7 @@ def list_staged() -> list[dict]:
     for staging_dir, kind in [(skills_staging, "skill"), (plugins_staging, "plugin")]:
         if not staging_dir.exists():
             continue
-        for item in _find_staged_items(staging_dir):
+        for item in _find_staged_items(staging_dir, kind):
             r = scan_directory(str(item))
             items.append({"name": item.name, "path": str(item), "kind": kind,
                           "risk_level": r.risk_level, "critical": r.critical_count,
@@ -100,7 +92,7 @@ def purge_staging(kind: str = "all") -> int:
             continue
         if not staging_dir.exists():
             continue
-        for item in _find_staged_items(staging_dir):
+        for item in _find_staged_items(staging_dir, kind):
             shutil.rmtree(item)
             count += 1
     print(f"🗑️  Purged {count} items from staging")

@@ -12,7 +12,7 @@ On other platforms: writes to stderr for log visibility only.
 import json
 import sys
 from pathlib import Path
-from faro.manifest import find_unvetted
+from faro.manifest import find_unvetted, _find_skill_dirs
 
 
 def check_staging() -> list[dict]:
@@ -24,9 +24,8 @@ def check_staging() -> list[dict]:
     ]:
         if not staging_dir.exists():
             continue
-        for item in staging_dir.iterdir():
-            if item.is_dir() and not item.name.startswith("."):
-                items.append({"name": item.name, "kind": kind})
+        for item in _find_skill_dirs(staging_dir, kind=kind):
+            items.append({"name": item.name, "kind": kind})
     return items
 
 
