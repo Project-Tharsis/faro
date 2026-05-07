@@ -1,11 +1,17 @@
 """Faro CLI — Hermes Skill/Plugin Security Pipeline."""
 
+import os
 import sys
 from pathlib import Path
 from faro.scanner import scan_directory, scan_staging
 from faro.reporter import to_text, to_json, summary_line
 from faro.staged import list_staged, approve, reject, purge_staging
 from faro.manifest import add_to_manifest, remove_from_manifest, find_unvetted, load_manifest, init_manifest
+
+
+def _get_home() -> Path:
+    env = os.environ.get("FARO_HOME")
+    return Path(env) if env else Path.home()
 
 
 def cmd_scan(args: list[str]):
@@ -90,7 +96,7 @@ def cmd_vet(args: list[str]):
         if a == "--path" and i + 1 < len(args):
             path = args[i + 1]
     if not path:
-        home = Path.home()
+        home = _get_home()
         base = home / ".hermes" / "skills" if kind == "skill" else home / ".hermes" / "hermes-agent" / "plugins"
         # Search recursively for name
         for d in base.rglob(name):

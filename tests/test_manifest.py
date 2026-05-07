@@ -11,16 +11,16 @@ from faro.manifest import (
     _manifest_key, _structure_hash, _content_hash,
     _find_skill_dirs, find_unvetted,
     add_to_manifest, remove_from_manifest,
-    load_manifest, MANIFEST_PATH,
+    load_manifest, _get_manifest_path,
 )
 
 
 def test_key_format():
     """skill:foo / plugin:foo keys prevent name collision."""
-    # Use temp manifest
     import faro.manifest as m
-    orig = m.MANIFEST_PATH
-    m.MANIFEST_PATH = Path(tempfile.mktemp(suffix=".json"))
+    orig = m._get_manifest_path
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    m._get_manifest_path = lambda: tmp
     try:
         add_to_manifest("same", "/tmp/same-skill", "skill")
         add_to_manifest("same", "/tmp/same-plugin", "plugin")
@@ -30,15 +30,16 @@ def test_key_format():
         assert data["skill:same"]["kind"] == "skill"
         assert data["plugin:same"]["kind"] == "plugin"
     finally:
-        m.MANIFEST_PATH.unlink(missing_ok=True)
-        m.MANIFEST_PATH = orig
+        tmp.unlink(missing_ok=True)
+        m._get_manifest_path = orig
 
 
 def test_name_collision_removed():
     """Remove one doesn't affect the other."""
     import faro.manifest as m
-    orig = m.MANIFEST_PATH
-    m.MANIFEST_PATH = Path(tempfile.mktemp(suffix=".json"))
+    orig = m._get_manifest_path
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    m._get_manifest_path = lambda: tmp
     try:
         add_to_manifest("same", "/tmp/same-skill", "skill")
         add_to_manifest("same", "/tmp/same-plugin", "plugin")
@@ -48,8 +49,8 @@ def test_name_collision_removed():
         assert "plugin:same" in data, "plugin accidentally removed"
         remove_from_manifest("same", "plugin")  # cleanup
     finally:
-        m.MANIFEST_PATH.unlink(missing_ok=True)
-        m.MANIFEST_PATH = orig
+        tmp.unlink(missing_ok=True)
+        m._get_manifest_path = orig
 
 
 def test_find_skill_dirs_skill_leaf_only():

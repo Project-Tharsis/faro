@@ -10,13 +10,19 @@ On other platforms: writes to stderr for log visibility only.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 from faro.manifest import find_unvetted, _find_skill_dirs
 
 
+def _get_home() -> Path:
+    env = os.environ.get("FARO_HOME")
+    return Path(env) if env else Path.home()
+
+
 def check_staging() -> list[dict]:
-    home = Path.home()
+    home = _get_home()
     items = []
     for staging_dir, kind in [
         (home / ".hermes" / "skills-staging", "skill"),

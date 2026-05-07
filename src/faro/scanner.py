@@ -1,10 +1,14 @@
-"""Core security scanner for skill/plugin directories."""
-
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-import re
 from faro.patterns import ScanPattern, PATTERNS
 from faro.manifest import _find_skill_dirs
+
+
+def _get_home() -> Path:
+    env = os.environ.get("FARO_HOME")
+    return Path(env) if env else Path.home()
 
 
 @dataclass
@@ -129,7 +133,7 @@ def _file_glob_match(file_path: Path, glob_pattern: str) -> bool:
 
 
 def scan_staging(skills_staging: str = None, plugins_staging: str = None) -> list[ScanResult]:
-    home = Path.home()
+    home = _get_home()
     skills_staging = Path(skills_staging) if skills_staging else home / ".hermes" / "skills-staging"
     plugins_staging = Path(plugins_staging) if plugins_staging else home / ".hermes" / "plugins-staging"
     results = []

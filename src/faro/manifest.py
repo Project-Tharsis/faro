@@ -7,11 +7,21 @@ Value: {path, kind, structure_hash, content_hash, vetted_at, scanner_version}
 
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Optional
 
-MANIFEST_PATH = Path.home() / ".hermes" / ".faro-manifest.json"
+
+def _get_home() -> Path:
+    env = os.environ.get("FARO_HOME")
+    return Path(env) if env else Path.home()
+
+
+def _get_manifest_path() -> Path:
+    return _get_home() / ".hermes" / ".faro-manifest.json"
+
+
 SCANNER_VERSION = "0.2.0"
 
 # Files whose content we hash for deep checks
@@ -53,19 +63,21 @@ def _manifest_key(name: str, kind: str) -> str:
 
 
 def load_manifest() -> dict:
-    if not MANIFEST_PATH.exists():
+    mp = _get_manifest_path()
+    if not mp.exists():
         return {}
     try:
-        return json.loads(MANIFEST_PATH.read_text())
+        return json.loads(mp.read_text())
     except (json.JSONDecodeError, OSError):
         return {}
 
 def save_manifest(data: dict) -> None:
     """Save manifest atomically via temp file + rename."""
-    MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = MANIFEST_PATH.with_suffix(".tmp")
+    mp = _get_manifest_path()
+    mp.parent.mkdir(parents=True, exist_ok=True)
+    tmp = mp.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    tmp.replace(MANIFEST_PATH)
+    tmp.replace(mp)
 
 
 def add_to_manifest(name: str, path: str, kind: str) -> None:
@@ -138,7 +150,7 @@ def find_unvetted(deep: bool = False) -> list[dict]:
     """
     manifest = load_manifest()
     unvetted = []
-    home = Path.home()
+    home = _get_home()
 
     for active_dir, kind in [
         (home / ".hermes" / "skills", "skill"),
@@ -190,7 +202,7 @@ def find_unvetted(deep: bool = False) -> list[dict]:
 
 
 def init_manifest() -> int:
-    home = Path.home()
+    home = _get_home()
     count = 0
     for active_dir, kind in [
         (home / ".hermes" / "skills", "skill"),

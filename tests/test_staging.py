@@ -1,53 +1,50 @@
-"""Integration tests for staging pipeline — approve, reject, purge, hook, scan_staging."""
+"""Integration tests for staging pipeline — approve, reject, purge, hook, scan_staging.
 
-import json
+All tests are fully isolated via FARO_HOME pointing to a temp directory.
+No real ~/.hermes is touched.
+"""
+
+import os
+import sys
 import tempfile
 from pathlib import Path
-import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-# Staging dirs used by tests
-HOME = Path.home()
-SKILLS_STAGING = HOME / ".hermes" / "skills-staging"
-PLUGINS_STAGING = HOME / ".hermes" / "plugins-staging"
-SKILLS_ACTIVE = HOME / ".hermes" / "skills"
-PLUGINS_ACTIVE = HOME / ".hermes" / "hermes-agent" / "plugins"
 
 TEST_SKILL_NAME = "__faro_test_skill__"
 TEST_PLUGIN_NAME = "__faro_test_plugin__"
 
 
-def _cleanup():
-    """Remove test artifacts from staging and active dirs."""
-    for d in [SKILLS_STAGING / TEST_SKILL_NAME,
-              SKILLS_STAGING / "creative",
-              PLUGINS_STAGING / TEST_PLUGIN_NAME,
-              PLUGINS_STAGING / "model-providers",
-              SKILLS_ACTIVE / TEST_SKILL_NAME,
-              PLUGINS_ACTIVE / TEST_PLUGIN_NAME]:
-        if d.exists():
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
+def _make_hermes_tree(home: Path) -> dict:
+    """Create minimal ~/.hermes directory tree in a temp home."""
+    dirs = {
+        "skills_staging": home / ".hermes" / "skills-staging",
+        "skills_active": home / ".hermes" / "skills",
+        "plugins_staging": home / ".hermes" / "plugins-staging",
+        "plugins_active": home / ".hermes" / "hermes-agent" / "plugins",
+    }
+    for d in dirs.values():
+        d.mkdir(parents=True, exist_ok=True)
+    return dirs
 
 
-def _create_staged_skill(name: str = TEST_SKILL_NAME, nested: bool = False):
-    """Create a test skill in staging. Returns its Path."""
+def _create_staged_skill(home: Path, name: str = TEST_SKILL_NAME, nested: bool = False) -> Path:
+    d = home / ".hermes" / "skills-staging"
     if nested:
-        d = SKILLS_STAGING / "creative" / name
+        d = d / "creative" / name
     else:
-        d = SKILLS_STAGING / name
+        d = d / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(f"# {name}")
     return d
 
 
-def _create_staged_plugin(name: str = TEST_PLUGIN_NAME, nested: bool = False):
-    """Create a test plugin in staging. Returns its Path."""
+def _create_staged_plugin(home: Path, name: str = TEST_PLUGIN_NAME, nested: bool = False) -> Path:
+    d = home / ".hermes" / "plugins-staging"
     if nested:
-        d = PLUGINS_STAGING / "model-providers" / name
+        d = d / "model-providers" / name
     else:
-        d = PLUGINS_STAGING / name
+        d = d / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "__init__.py").write_text(f"# {name}")
     return d
@@ -55,133 +52,142 @@ def _create_staged_plugin(name: str = TEST_PLUGIN_NAME, nested: bool = False):
 
 def test_approve_reject_kind():
     """approve() and reject() work with kind=skill and kind=plugin."""
-    _cleanup()
-    try:
-        from faro.staged import approve, reject, list_staged
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        os.environ["FARO_HOME"] = str(home)
+        _make_hermes_tree(home)
+        try:
+            from faro.staged import approve, reject, list_staged
 
-        # Create test skill
-        s = _create_staged_skill()
-        items = list_staged()
-        assert any(i["name"] == TEST_SKILL_NAME for i in items), "staged skill not listed"
+            # Skill
+            _create_staged_skill(home)
+            items = list_staged()
+            assert any(i["name"] == TEST_SKILL_NAME for i in items), "staged skill not listed"
 
-        # Approve skill
-        result = approve(TEST_SKILL_NAME, kind="skill", force=True)
-        assert result is not None, f"approve failed: expected path, got None"
-        assert (SKILLS_ACTIVE / TEST_SKILL_NAME).exists(), "skill not moved to active"
+            result = approve(TEST_SKILL_NAME, kind="skill", force=True)
+            assert result is not None, f"approve failed: {result}"
+            assert (home / ".hermes" / "skills" / TEST_SKILL_NAME).exists(), "skill not moved to active"
 
-        # Reject it back (simulate: create a new staging copy)
-        (SKILLS_ACTIVE / TEST_SKILL_NAME).rename(SKILLS_STAGING / TEST_SKILL_NAME)
-        ok = reject(TEST_SKILL_NAME, kind="skill")
-        assert ok, "reject should return True"
-        assert not (SKILLS_STAGING / TEST_SKILL_NAME).exists(), "staging dir should be deleted"
+            # Reject it
+            (home / ".hermes" / "skills" / TEST_SKILL_NAME).rename(
+                home / ".hermes" / "skills-staging" / TEST_SKILL_NAME)
+            ok = reject(TEST_SKILL_NAME, kind="skill")
+            assert ok, "reject should return True"
+            assert not (home / ".hermes" / "skills-staging" / TEST_SKILL_NAME).exists()
 
-        # Create test plugin
-        p = _create_staged_plugin()
-        result = approve(TEST_PLUGIN_NAME, kind="plugin", force=True)
-        assert result is not None, "plugin approve failed"
-        assert (PLUGINS_ACTIVE / TEST_PLUGIN_NAME).exists(), "plugin not moved to active"
+            # Plugin
+            _create_staged_plugin(home)
+            result = approve(TEST_PLUGIN_NAME, kind="plugin", force=True)
+            assert result is not None, "plugin approve failed"
+            assert (home / ".hermes" / "hermes-agent" / "plugins" / TEST_PLUGIN_NAME).exists()
 
-        # Reject it
-        (PLUGINS_ACTIVE / TEST_PLUGIN_NAME).rename(PLUGINS_STAGING / TEST_PLUGIN_NAME)
-        ok = reject(TEST_PLUGIN_NAME, kind="plugin")
-        assert ok, "plugin reject should return True"
-
-    finally:
-        _cleanup()
+            (home / ".hermes" / "hermes-agent" / "plugins" / TEST_PLUGIN_NAME).rename(
+                home / ".hermes" / "plugins-staging" / TEST_PLUGIN_NAME)
+            ok = reject(TEST_PLUGIN_NAME, kind="plugin")
+            assert ok, "plugin reject should return True"
+        finally:
+            del os.environ["FARO_HOME"]
 
 
 def test_purge_staging_all_clears_both():
     """purge_staging('all') clears both skills and plugins."""
-    _cleanup()
-    try:
-        from faro.staged import purge_staging
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        os.environ["FARO_HOME"] = str(home)
+        _make_hermes_tree(home)
+        try:
+            from faro.staged import purge_staging
 
-        _create_staged_skill(TEST_SKILL_NAME)
-        _create_staged_plugin(TEST_PLUGIN_NAME)
+            _create_staged_skill(home)
+            _create_staged_plugin(home)
 
-        count = purge_staging(kind="all")
-        assert count == 2, f"Expected 2 purged, got {count}"
-
-        assert not (SKILLS_STAGING / TEST_SKILL_NAME).exists(), "skill staging not purged"
-        assert not (PLUGINS_STAGING / TEST_PLUGIN_NAME).exists(), "plugin staging not purged"
-
-    finally:
-        _cleanup()
+            count = purge_staging(kind="all")
+            assert count == 2, f"Expected 2 purged, got {count}"
+            assert not (home / ".hermes" / "skills-staging" / TEST_SKILL_NAME).exists()
+            assert not (home / ".hermes" / "plugins-staging" / TEST_PLUGIN_NAME).exists()
+        finally:
+            del os.environ["FARO_HOME"]
 
 
 def test_hook_check_staging_nested():
     """Hook check_staging() finds nested skill by leaf name, not category."""
-    _cleanup()
-    try:
-        from faro.hook import check_staging
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        os.environ["FARO_HOME"] = str(home)
+        _make_hermes_tree(home)
+        try:
+            from faro.hook import check_staging
 
-        _create_staged_skill("pixel-art", nested=True)
+            _create_staged_skill(home, "pixel-art", nested=True)
 
-        items = check_staging()
-        names = [i["name"] for i in items]
-        assert "pixel-art" in names, f"nested skill not found: {names}"
-        assert "creative" not in names, f"category dir should not be in: {names}"
-
-    finally:
-        _cleanup()
+            items = check_staging()
+            names = [i["name"] for i in items]
+            assert "pixel-art" in names, f"nested skill not found: {names}"
+            assert "creative" not in names, f"category dir in results: {names}"
+        finally:
+            del os.environ["FARO_HOME"]
 
 
 def test_scan_staging_nested():
     """scan_staging() finds nested skills/plugins, not category dirs."""
-    _cleanup()
-    try:
-        from faro.scanner import scan_staging
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        os.environ["FARO_HOME"] = str(home)
+        _make_hermes_tree(home)
+        try:
+            from faro.scanner import scan_staging
 
-        _create_staged_skill("pixel-art", nested=True)
-        _create_staged_plugin("openai", nested=True)
+            _create_staged_skill(home, "pixel-art", nested=True)
+            _create_staged_plugin(home, "openai", nested=True)
 
-        results = scan_staging()
-        names = {r.name for r in results}
-        assert "pixel-art" in names, f"nested skill missing: {names}"
-        assert "openai" in names, f"nested plugin missing: {names}"
-        assert "creative" not in names, f"category dir should not be scanned"
-        assert "model-providers" not in names, f"category dir should not be scanned"
-
-    finally:
-        _cleanup()
+            results = scan_staging()
+            names = {r.name for r in results}
+            assert "pixel-art" in names, f"nested skill missing: {names}"
+            assert "openai" in names, f"nested plugin missing: {names}"
+            assert "creative" not in names, f"category dir scanned"
+            assert "model-providers" not in names, f"category dir scanned"
+        finally:
+            del os.environ["FARO_HOME"]
 
 
 def test_approve_rejects_category_dir():
     """approve() does not find category dirs like 'creative' as staged items."""
-    _cleanup()
-    try:
-        from faro.staged import approve
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        os.environ["FARO_HOME"] = str(home)
+        _make_hermes_tree(home)
+        try:
+            from faro.staged import approve
 
-        _create_staged_skill("pixel-art", nested=True)
-        # Try to approve "creative" — should fail
-        result = approve("creative", kind="skill", force=True)
-        assert result is None, "approve should not find category dir 'creative'"
-
-    finally:
-        _cleanup()
+            _create_staged_skill(home, "pixel-art", nested=True)
+            result = approve("creative", kind="skill", force=True)
+            assert result is None, "approve should not find category dir 'creative'"
+        finally:
+            del os.environ["FARO_HOME"]
 
 
 def test_scan_staging_category_not_scanned():
-    """scan_staging() with a plugin category dir doesn't scan the category itself."""
-    _cleanup()
-    try:
-        from faro.scanner import scan_staging
+    """scan_staging() with plugin category dir doesn't scan the category itself."""
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        os.environ["FARO_HOME"] = str(home)
+        _make_hermes_tree(home)
+        try:
+            from faro.scanner import scan_staging
 
-        # Create a plugin category dir with __init__.py (like model-providers)
-        cat = PLUGINS_STAGING / "model-providers"
-        cat.mkdir(parents=True, exist_ok=True)
-        (cat / "__init__.py").write_text("")
-        sub = cat / "openai"
-        sub.mkdir()
-        (sub / "__init__.py").write_text("")
+            cat = home / ".hermes" / "plugins-staging" / "model-providers"
+            cat.mkdir(parents=True, exist_ok=True)
+            (cat / "__init__.py").write_text("")
+            sub = cat / "openai"
+            sub.mkdir()
+            (sub / "__init__.py").write_text("")
 
-        results = scan_staging()
-        names = {r.name for r in results}
-        assert "openai" in names, "sub-plugin should be found"
-        assert "model-providers" not in names, f"category dir scanned: {names}"
-
-    finally:
-        _cleanup()
+            results = scan_staging()
+            names = {r.name for r in results}
+            assert "openai" in names, "sub-plugin should be found"
+            assert "model-providers" not in names, f"category dir scanned: {names}"
+        finally:
+            del os.environ["FARO_HOME"]
 
 
 if __name__ == "__main__":
