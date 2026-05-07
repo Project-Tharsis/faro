@@ -38,7 +38,7 @@ def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
 
     # Search recursively for the named item
     src = None
-    for item in _find_staged_items(staging_dir):
+    for item in _find_staged_items(staging_dir, kind):
         if item.name == name:
             src = item
             break
@@ -68,9 +68,8 @@ def reject(name: str, kind: str = "skill") -> bool:
     skills_staging, _, plugins_staging, _ = _get_dirs()
     staging_dir = skills_staging if kind == "skill" else plugins_staging
 
-    # Search recursively
     target = None
-    for item in _find_staged_items(staging_dir):
+    for item in _find_staged_items(staging_dir, kind):
         if item.name == name:
             target = item
             break
@@ -92,7 +91,7 @@ def purge_staging(kind: str = "all") -> int:
             continue
         if not staging_dir.exists():
             continue
-        for item in _find_staged_items(staging_dir, kind):
+        for item in _find_staged_items(staging_dir, k):
             shutil.rmtree(item)
             count += 1
     print(f"🗑️  Purged {count} items from staging")
