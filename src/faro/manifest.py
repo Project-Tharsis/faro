@@ -60,10 +60,12 @@ def load_manifest() -> dict:
     except (json.JSONDecodeError, OSError):
         return {}
 
-
 def save_manifest(data: dict) -> None:
+    """Save manifest atomically via temp file + rename."""
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    tmp = MANIFEST_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    tmp.replace(MANIFEST_PATH)
 
 
 def add_to_manifest(name: str, path: str, kind: str) -> None:

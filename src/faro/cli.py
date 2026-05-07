@@ -34,8 +34,13 @@ def cmd_scan(args: list[str]):
 
 def cmd_list(args: list[str]):
     items = list_staged()
+    json_mode = "--json" in args
     if not items:
-        print("No staged items.")
+        print("[]" if json_mode else "No staged items.")
+        return
+    if json_mode:
+        import json as _json
+        print(_json.dumps(items, indent=2, ensure_ascii=False))
         return
     icon_map = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "none": "✅"}
     for item in items:
@@ -108,7 +113,12 @@ def cmd_vet(args: list[str]):
 def cmd_check(args: list[str]):
     """Check active skills/plugins against manifest. Use --deep for content hash."""
     deep = "--deep" in args
+    json_mode = "--json" in args
     unvetted = find_unvetted(deep=deep)
+    if json_mode:
+        import json as _json
+        print(_json.dumps(unvetted, indent=2, ensure_ascii=False))
+        return
     if not unvetted:
         label = " (deep)" if deep else ""
         print(f"✅ All active skills/plugins are in the manifest{label}.")

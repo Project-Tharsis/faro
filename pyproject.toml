@@ -4,10 +4,33 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "faro"
-version = "0.1.0"
-description = "Hermes Skill/Plugin security pipeline — staging, audit, approve"
+version = "0.2.0"
+description = "Security audit skill for Hermes Agent — staging, scan, approve pipeline"
+readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.11"
+authors = [{name = "Project Tharsis"}]
+keywords = ["hermes-agent", "security", "skills", "audit", "scanner"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Project-Tharsis/faro"
+Repository = "https://github.com/Project-Tharsis/faro.git"
+Issues = "https://github.com/Project-Tharsis/faro/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
 
 [project.scripts]
 faro = "faro.cli:main"
@@ -17,3 +40,7 @@ faro = "faro.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
