@@ -1,6 +1,7 @@
 """Faro CLI — Hermes Skill/Plugin Security Pipeline."""
 
 import sys
+from pathlib import Path
 from faro.scanner import scan_directory, scan_staging
 from faro.reporter import to_text, to_json, summary_line
 from faro.staged import list_staged, approve, reject, purge_staging
@@ -8,21 +9,23 @@ from faro.manifest import add_to_manifest, remove_from_manifest, find_unvetted, 
 
 
 def cmd_scan(args: list[str]):
+    json_mode = "--json" in args
     if not args or args[0] == "--staged":
         results = scan_staging()
+        if json_mode:
+            print(to_json(results))
+            return
         if not results:
             print("No staged items found.")
             return
         for r in results:
             print(summary_line(r))
-        if "--json" in args:
-            print(to_json(results))
-        elif "--full" in args:
+        if "--full" in args:
             print("\n" + to_text(results))
     else:
         path = args[0]
         result = scan_directory(path)
-        if "--json" in args:
+        if json_mode:
             print(to_json([result]))
         else:
             print(to_text([result]))
@@ -82,13 +85,18 @@ def cmd_vet(args: list[str]):
         if a == "--path" and i + 1 < len(args):
             path = args[i + 1]
     if not path:
-        from pathlib import Path
         home = Path.home()
-        if kind == "skill":
-            path = str(home / ".hermes" / "skills" / name)
-        else:
-            path = str(home / ".hermes" / "hermes-agent" / "plugins" / name)
-    if not Path(path).exists():
+        base = home / ".hermes" / "skills" if kind == "skill" else home / ".hermes" / "hermes-agent" / "plugins"
+        # Search recursively for name
+        for d in base.rglob(name):
+            if d.is_dir() and (d / "SKILL.md" if kind == "skill" else True):
+                path = str(d)
+                break
+        if not path:
+            print(f"❌ '{name}' not found under {base}")
+            return
+    p = Path(path)
+    if not p.exists():
         print(f"❌ Path not found: {path}")
         return
     add_to_manifest(name, path, kind)
@@ -96,16 +104,25 @@ def cmd_vet(args: list[str]):
 
 
 def cmd_check(args: list[str]):
-    """Check active skills/plugins against manifest."""
-    unvetted = find_unvetted()
+    """Check active skills/plugins against manifest. Use --deep for content hash."""
+    deep = "--deep" in args
+    unvetted = find_unvetted(deep=deep)
     if not unvetted:
-        print("✅ All active skills/plugins are in the manifest.")
+        label = " (deep)" if deep else ""
+        print(f"✅ All active skills/plugins are in the manifest{label}.")
         return
     print(f"⚠️  {len(unvetted)} unvetted item(s) found:\n")
     for u in unvetted:
-        print(f"  🔴 [{u['kind']:6s}] {u['name']}")
-        print(f"      {u['path']}")
-        print(f"      → faro vet {u['name']} --kind {u['kind']}")
+        reason = u.get("reason", "not_in_manifest")
+        icon_map = {"not_in_manifest": "🔴", "structure_changed": "🟠", "content_changed": "🟡"}
+        icon = icon_map.get(reason, "🔴")
+        print(f"  {icon} [{u['kind']:6s}] {u['name']}")
+        print(f"      reason: {reason}")
+        if reason == "not_in_manifest":
+            print(f"      → faro vet {u['name']} --kind {u['kind']}")
+        else:
+            print(f"      path: {u['path']}")
+            print(f"      → faro vet {u['name']} --kind {u['kind']}  (to update manifest hash)")
 
 
 def cmd_init_manifest(args: list[str]):

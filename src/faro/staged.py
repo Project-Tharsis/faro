@@ -56,7 +56,7 @@ def reject(name: str, kind: str = "skill") -> bool:
         print(f"❌ '{name}' not found in {kind}s staging")
         return False
     shutil.rmtree(target)
-    remove_from_manifest(name)
+    remove_from_manifest(name, kind)
     print(f"🗑️  Rejected: {kind}/{name} deleted")
     return True
 
