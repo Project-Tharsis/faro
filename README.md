@@ -80,6 +80,30 @@ The hook runs before each LLM call. It checks:
 Default mode is fast (structure hash only). Use `faro check --deep` to also
 verify file contents haven't changed since approval.
 
+## Development
+
+### Override home directory
+
+Faro targets `~/.hermes/` by default. Set `FARO_HOME` to redirect all paths
+to a different directory — useful for testing or multi-instance setups:
+
+```bash
+FARO_HOME=/tmp/faro-test faro scan --staged
+FARO_HOME=/tmp/faro-test faro list
+```
+
+Integration tests use this mechanism to run in a `tempfile.TemporaryDirectory`
+without touching the real `~/.hermes`.
+
+### Running tests
+
+```bash
+pip install -e ".[dev]"
+pytest -q
+```
+
+No special setup required — all tests are fully isolated via `FARO_HOME`.
+
 ## Security Rules
 
 Faro runs 19 automated checks across 5 categories:

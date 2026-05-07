@@ -1,21 +1,15 @@
 """Staging directory manager — list, approve, reject."""
 
-import os
 from pathlib import Path
 import shutil
+from faro import get_home
 from faro.scanner import scan_directory
 from faro.manifest import add_to_manifest, remove_from_manifest, _find_skill_dirs
 
 
-def _get_home() -> Path:
-    """Resolve Hermes home dir. Use FARO_HOME env var in tests, Path.home() otherwise."""
-    env = os.environ.get("FARO_HOME")
-    return Path(env) if env else Path.home()
-
-
 def _get_dirs(home: Path | None = None) -> tuple[Path, Path, Path, Path]:
     if home is None:
-        home = _get_home()
+        home = get_home()
     return (home / ".hermes" / "skills-staging", home / ".hermes" / "skills",
             home / ".hermes" / "plugins-staging", home / ".hermes" / "hermes-agent" / "plugins")
 

@@ -7,19 +7,14 @@ Value: {path, kind, structure_hash, content_hash, vetted_at, scanner_version}
 
 import hashlib
 import json
-import os
 import time
 from pathlib import Path
 from typing import Optional
-
-
-def _get_home() -> Path:
-    env = os.environ.get("FARO_HOME")
-    return Path(env) if env else Path.home()
+from faro import get_home
 
 
 def _get_manifest_path() -> Path:
-    return _get_home() / ".hermes" / ".faro-manifest.json"
+    return get_home() / ".hermes" / ".faro-manifest.json"
 
 
 SCANNER_VERSION = "0.2.0"
@@ -150,7 +145,7 @@ def find_unvetted(deep: bool = False) -> list[dict]:
     """
     manifest = load_manifest()
     unvetted = []
-    home = _get_home()
+    home = get_home()
 
     for active_dir, kind in [
         (home / ".hermes" / "skills", "skill"),
@@ -202,7 +197,7 @@ def find_unvetted(deep: bool = False) -> list[dict]:
 
 
 def init_manifest() -> int:
-    home = _get_home()
+    home = get_home()
     count = 0
     for active_dir, kind in [
         (home / ".hermes" / "skills", "skill"),
