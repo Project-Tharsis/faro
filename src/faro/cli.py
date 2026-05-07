@@ -89,7 +89,9 @@ def cmd_vet(args: list[str]):
         base = home / ".hermes" / "skills" if kind == "skill" else home / ".hermes" / "hermes-agent" / "plugins"
         # Search recursively for name
         for d in base.rglob(name):
-            if d.is_dir() and (d / "SKILL.md" if kind == "skill" else True):
+            if d.is_dir():
+                if kind == "skill" and not (d / "SKILL.md").exists():
+                    continue
                 path = str(d)
                 break
         if not path:

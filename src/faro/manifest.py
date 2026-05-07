@@ -92,16 +92,38 @@ def remove_from_manifest(name: str, kind: str) -> bool:
     return True
 
 
-def _find_skill_dirs(root: Path) -> list[Path]:
-    """Find leaf skill/plugin directories — only dirs containing SKILL.md."""
+def _find_skill_dirs(root: Path, kind: str = "skill") -> list[Path]:
+    """Find leaf skill/plugin directories.
+
+    Skills: dirs containing SKILL.md
+    Plugins: dirs containing plugin.yaml or __init__.py (not parent categories)
+    """
     items = []
+    if kind == "skill":
+        marker = "SKILL.md"
+    else:
+        marker = None  # Use heuristics below
+
     for d in root.rglob("*"):
         if not d.is_dir() or d.name.startswith("."):
             continue
         if any(ex in d.parts for ex in ("__pycache__", "node_modules", ".git")):
             continue
-        if (d / "SKILL.md").exists():
-            items.append(d)
+        if kind == "skill":
+            if (d / "SKILL.md").exists():
+                items.append(d)
+        else:
+            # Plugin: has plugin.yaml or __init__.py, and is a leaf (not category dir)
+            has_marker = (d / "plugin.yaml").exists() or (d / "__init__.py").exists()
+            if has_marker:
+                # Exclude category dirs (e.g., "model-providers" has children with __init__.py)
+                has_child_plugin = False
+                for child in d.iterdir():
+                    if child.is_dir() and ((child / "plugin.yaml").exists() or (child / "__init__.py").exists()):
+                        has_child_plugin = True
+                        break
+                if not has_child_plugin:
+                    items.append(d)
     return items
 
 
@@ -122,7 +144,7 @@ def find_unvetted(deep: bool = False) -> list[dict]:
     ]:
         if not active_dir.exists():
             continue
-        for item in _find_skill_dirs(active_dir):
+        for item in _find_skill_dirs(active_dir, kind=kind):
             key = _manifest_key(item.name, kind)
             entry = manifest.get(key)
 
@@ -174,7 +196,7 @@ def init_manifest() -> int:
     ]:
         if not active_dir.exists():
             continue
-        for item in _find_skill_dirs(active_dir):
+        for item in _find_skill_dirs(active_dir, kind=kind):
             add_to_manifest(item.name, str(item), kind)
             count += 1
     return count
