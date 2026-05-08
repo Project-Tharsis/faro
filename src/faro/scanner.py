@@ -43,7 +43,7 @@ class ScanResult:
 
 _SCRIPT_EXTS = {".py", ".sh", ".js", ".ts", ".rb", ".pl"}
 _TEXT_EXTS = _SCRIPT_EXTS | {".md", ".yaml", ".yml", ".json", ".toml", ".cfg", ".ini", ".txt"}
-_BINARY_EXTS = {".so", ".o", ".exe", ".dll", ".bin", ".pyd"}
+_BINARY_EXTS = {".so", ".o", ".exe", ".dll", ".dylib", ".bin", ".pyd"}
 _ARCHIVE_EXTS = {".zip", ".tar", ".tgz", ".tar.gz", ".whl", ".egg"}
 _EXCLUDE_DIRS = {"__pycache__", "node_modules", ".git"}
 
@@ -123,6 +123,26 @@ def scan_directory(path: str) -> ScanResult:
                         pattern.description, str(file_path.relative_to(root)),
                         lineno, line.strip()[:120], m.group(0)))
 
+    # Scan extensionless config files (Makefile, Dockerfile, etc.)
+    _EXTENSIONLESS_PATTERNS = ["Makefile", "Dockerfile", "Gemfile", "Rakefile"]
+    for name in _EXTENSIONLESS_PATTERNS:
+        f = root / name
+        if f.is_file():
+            rel = str(f.relative_to(root))
+            try:
+                content = f.read_text(errors="replace")
+            except Exception:
+                continue
+            for pattern in PATTERNS:
+                if not _file_glob_match(f, pattern.file_glob):
+                    continue
+                for lineno, line in enumerate(content.split("\n"), 1):
+                    for m in re.finditer(pattern.regex or "", line):
+                        result.findings.append(Finding(
+                            pattern.id, pattern.severity, pattern.category,
+                            pattern.description, rel,
+                            lineno, line.strip()[:120], m.group(0)))
+
     # Archive file check
     for f in _find_files(root, _ARCHIVE_EXTS):
         rel = str(f.relative_to(root))
@@ -183,6 +203,10 @@ def _file_glob_match(file_path: Path, glob_pattern: str) -> bool:
     """Check if file matches a simple extension glob pattern."""
     if not glob_pattern or glob_pattern == "*.py":
         return file_path.suffix == ".py"
+    # Handle extensionless patterns like "Makefile*"
+    if glob_pattern.endswith("*") and "." not in glob_pattern[:-1]:
+        base = glob_pattern[:-1]  # e.g., "Makefile"
+        return file_path.name == base or file_path.name.startswith(base)
     # Parse extensions from "*.{ext1,ext2}" or "*.ext"
     inner = glob_pattern.replace("*", "")
     if inner.startswith(".{") and inner.endswith("}"):

@@ -166,6 +166,46 @@ def hello():
     assert len(f) == 0, f"Clean file should have no findings, got: {f}"
 
 
+def test_from_yaml_import_load():
+    """from yaml import load; load(...) should be detected."""
+    code = '''from yaml import load
+load("key: value")
+'''
+    f = _scan_code(code)
+    assert any(fi.pattern_id == "danger-yaml-ast" for fi in f), \
+        f"from yaml import load not detected, got: {f}"
+
+
+def test_from_importlib_import_module():
+    """from importlib import import_module; import_module('subprocess') detected."""
+    code = '''from importlib import import_module
+import_module("subprocess")
+'''
+    f = _scan_code(code)
+    assert any(fi.pattern_id in ("danger-importlib-ast", "danger-import-ast") for fi in f), \
+        f"from importlib import import_module not detected, got: {f}"
+
+
+def test_getattr_os_system():
+    """getattr(os, 'system')('id') should be detected."""
+    code = '''import os
+getattr(os, "system")("id")
+'''
+    f = _scan_code(code)
+    assert any(fi.pattern_id == "danger-os-ast" for fi in f), \
+        f"getattr(os, 'system') not detected, got: {f}"
+
+
+def test_path_home():
+    """Path.home() should produce a finding."""
+    code = '''from pathlib import Path
+p = Path.home() / ".ssh"
+'''
+    f = _scan_code(code)
+    assert any(fi.pattern_id == "cred-sensitive-path-ast" for fi in f), \
+        f"Path.home() not detected, got: {f}"
+
+
 if __name__ == "__main__":
     tests = [
         ("from_subprocess_import_run", test_from_subprocess_import_run_is_detected),
@@ -183,6 +223,10 @@ if __name__ == "__main__":
         ("expanduser_ssh", test_expanduser_ssh_is_detected),
         ("open_config", test_open_config_is_detected),
         ("clean_file_no_findings", test_clean_file_has_no_findings),
+        ("from_yaml_import_load", test_from_yaml_import_load),
+        ("from_importlib_import_module", test_from_importlib_import_module),
+        ("getattr_os_system", test_getattr_os_system),
+        ("path_home", test_path_home),
     ]
     passed = 0
     for name, fn in tests:

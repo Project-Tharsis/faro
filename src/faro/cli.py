@@ -60,7 +60,9 @@ def cmd_approve(args: list[str]):
             kind = args[i + 1]
         if a == "--force":
             force = True
-    approve(name, kind=kind, force=force)
+    result = approve(name, kind=kind, force=force)
+    if result is None:
+        sys.exit(1)
 
 
 def cmd_reject(args: list[str]):
@@ -71,7 +73,9 @@ def cmd_reject(args: list[str]):
     for i, a in enumerate(args):
         if a == "--kind" and i + 1 < len(args):
             kind = args[i + 1]
-    reject(name, kind=kind)
+    ok = reject(name, kind=kind)
+    if not ok:
+        sys.exit(1)
 
 
 def cmd_prune(args: list[str]):

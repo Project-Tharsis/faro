@@ -49,6 +49,13 @@ def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
         return None
 
     dst = active_dir / name
+    # Preserve directory nesting from staging (e.g., creative/pixel-art)
+    try:
+        rel_from_staging = src.resolve().relative_to(staging_dir.resolve())
+        if rel_from_staging != Path(name):
+            dst = active_dir / rel_from_staging
+    except ValueError:
+        pass  # src not under staging (shouldn't happen)
     if not force and dst.exists():
         print(f"⚠️  '{name}' already active. Use --force to overwrite.")
         return None

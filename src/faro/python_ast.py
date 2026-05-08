@@ -25,6 +25,7 @@ DANGEROUS_IMPORTS = {
     "ctypes": {"CDLL", "WinDLL", "windll", "cdll"},
     "pickle": {"loads", "load"},
     "marshal": {"loads", "load"},
+    "yaml": {"load", "dump", "full_load"},
 }
 
 DANGEROUS_MODULES = {"__import__", "importlib"}
@@ -146,7 +147,7 @@ def scan_python_ast(file_path: Path, root: Path) -> list[Finding]:
                                 f"{name}.{obj.attr}()"
                             ))
 
-            # ── Aliased calls: run(...), system(...), CDLL(...) ──
+            # ── Aliased calls: run(...), system(...), CDLL(...), import_module(...) ──
             elif isinstance(node.func, ast.Name):
                 name = node.func.id
                 src_modules = imports.get(name, set())
@@ -161,9 +162,19 @@ def scan_python_ast(file_path: Path, root: Path) -> list[Finding]:
                         elif mod == "marshal" and name in ("loads", "load"):
                             pattern_id = "danger-marshal-ast"
                             desc = f"marshal.{name}() — unsafe deserialization"
+                        elif mod == "yaml" and name in ("load", "full_load"):
+                            pattern_id = "danger-yaml-ast"
+                            desc = f"yaml.{name}() — unsafe deserialization"
                         findings.append(Finding(
                             pattern_id, severity, "dangerous_call",
                             desc, rel_path, node.lineno,
+                            ast.unparse(node)[:120], f"{name}()"
+                        ))
+                    elif mod in DANGEROUS_MODULES:
+                        findings.append(Finding(
+                            f"danger-{mod}-ast", "high", "dangerous_call",
+                            f"{name}() — imported from {mod}, dynamic code loading",
+                            rel_path, node.lineno,
                             ast.unparse(node)[:120], f"{name}()"
                         ))
 
@@ -174,6 +185,36 @@ def scan_python_ast(file_path: Path, root: Path) -> list[Finding]:
                         "__import__() — dynamic module loading",
                         rel_path, node.lineno, ast.unparse(node)[:120], "__import__()"
                     ))
+
+        # ── getattr(os, "system")("id") — dynamic attribute access ──
+        if isinstance(node, ast.Call):
+            if (isinstance(node.func, ast.Call) and
+                    isinstance(node.func.func, ast.Name) and
+                    node.func.func.id == "getattr"):
+                getattr_args = node.func.args
+                if len(getattr_args) >= 2:
+                    obj = getattr_args[0]
+                    attr = getattr_args[1]
+                    if isinstance(obj, ast.Name) and isinstance(attr, ast.Constant) and isinstance(attr.value, str):
+                        obj_name = obj.id
+                        attr_name = attr.value
+                        src_mods = imports.get(obj_name, set())
+                        # Check if the object is a dangerous module or alias
+                        for mod in src_mods:
+                            if mod in DANGEROUS_IMPORTS and attr_name in DANGEROUS_IMPORTS[mod]:
+                                findings.append(Finding(
+                                    f"danger-{mod}-ast", "high", "dangerous_call",
+                                    f"getattr({obj_name}, '{attr_name}') — bypassing direct attribute access",
+                                    rel_path, node.lineno, ast.unparse(node)[:120],
+                                    f"getattr({obj_name}, '{attr_name}')"
+                                ))
+                        if obj_name in DANGEROUS_IMPORTS and attr_name in DANGEROUS_IMPORTS[obj_name]:
+                            findings.append(Finding(
+                                f"danger-{obj_name}-ast", "high", "dangerous_call",
+                                f"getattr({obj_name}, '{attr_name}') — bypassing direct attribute access",
+                                rel_path, node.lineno, ast.unparse(node)[:120],
+                                f"getattr({obj_name}, '{attr_name}')"
+                            ))
 
         # ── eval / exec ──
         if isinstance(node, ast.Call):
@@ -208,14 +249,17 @@ def scan_python_ast(file_path: Path, root: Path) -> list[Finding]:
 
         # ── sensitive path access ──
         if isinstance(node, ast.Call):
-            # Path.home() / ".ssh"
+            # Path.home() / ".ssh" — detect via string constants nearby
             if (isinstance(node.func, ast.Attribute) and
                     isinstance(node.func.value, ast.Name) and
                     node.func.value.id == "Path" and
                     node.func.attr == "home"):
-                # Check if followed by / operator with sensitive string
-                # We scan the parent context for string concatenation
-                pass  # Handled by string constant scan below
+                # Mark for review if parent context has sensitive path
+                findings.append(Finding(
+                    "cred-sensitive-path-ast", "medium", "credential_leak",
+                    "Path.home() called — potential sensitive path access",
+                    rel_path, node.lineno, ast.unparse(node)[:120], "Path.home()"
+                ))
 
             # os.path.expanduser("~/.ssh")
             if (isinstance(node.func, ast.Attribute) and

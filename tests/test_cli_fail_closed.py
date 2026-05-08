@@ -73,18 +73,19 @@ def test_prune_no_args_exits_nonzero():
 
 
 def test_approve_missing_item_exits_nonzero():
-    """faro approve nonexistent → non-zero exit."""
+    """faro approve nonexistent → non-zero exit + returncode check."""
     r = _run_cli(["approve", "__nonexistent_skill_xyz__"])
-    # approve prints to stdout, check for error message
     assert "not found" in r.stdout.lower() or "not found" in r.stderr.lower(), \
         f"Expected 'not found', got: {r.stdout[:200]}"
+    assert r.returncode != 0, f"approve missing item should exit non-zero, got {r.returncode}"
 
 
 def test_reject_missing_item_exits_nonzero():
-    """faro reject nonexistent → non-zero exit."""
+    """faro reject nonexistent → non-zero exit + returncode check."""
     r = _run_cli(["reject", "__nonexistent_skill_xyz__"])
     assert "not found" in r.stdout.lower() or "not found" in r.stderr.lower(), \
         f"Expected 'not found', got: {r.stdout[:200]}"
+    assert r.returncode != 0, f"reject missing item should exit non-zero, got {r.returncode}"
 
 
 if __name__ == "__main__":
