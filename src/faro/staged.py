@@ -58,6 +58,15 @@ def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
         print(f"🔴 '{name}' has {result.risk_level} risk ({result.critical_count}C/{result.high_count}H). Use --force.")
         return None
 
+    # Hard block: external symlinks are path escape, not mitigatable by --force
+    symlink_escapes = [f for f in result.findings if f.pattern_id == "symlink-escape"]
+    if symlink_escapes:
+        print(f"🔴 '{name}' contains external symlink escape(s):")
+        for s in symlink_escapes:
+            print(f"   {s.file}")
+        print("   External symlinks are blocked even with --force.")
+        return None
+
     if dst.exists():
         shutil.rmtree(dst)
     shutil.move(str(src), str(dst))

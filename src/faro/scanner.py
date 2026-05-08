@@ -44,6 +44,7 @@ class ScanResult:
 _SCRIPT_EXTS = {".py", ".sh", ".js", ".ts", ".rb", ".pl"}
 _TEXT_EXTS = _SCRIPT_EXTS | {".md", ".yaml", ".yml", ".json", ".toml", ".cfg", ".ini", ".txt"}
 _BINARY_EXTS = {".so", ".o", ".exe", ".dll", ".bin", ".pyd"}
+_ARCHIVE_EXTS = {".zip", ".tar", ".tgz", ".tar.gz", ".whl", ".egg"}
 _EXCLUDE_DIRS = {"__pycache__", "node_modules", ".git"}
 
 
@@ -122,7 +123,51 @@ def scan_directory(path: str) -> ScanResult:
                         pattern.description, str(file_path.relative_to(root)),
                         lineno, line.strip()[:120], m.group(0)))
 
+    # Archive file check
+    for f in _find_files(root, _ARCHIVE_EXTS):
+        rel = str(f.relative_to(root))
+        result.findings.append(Finding("archive-file", "high", "file_access",
+            f"Archive file: {f.name}", rel, 0, f.name, f.name))
+
+    # Symlink detection
+    for f in root.rglob("*"):
+        if f.is_symlink():
+            rel = str(f.relative_to(root))
+            try:
+                target = f.resolve()
+                if target.is_relative_to(root.resolve()):
+                    result.findings.append(Finding(
+                        "symlink-internal", "medium", "file_access",
+                        f"Internal symlink: {rel} → {target}", rel, 0, f.name, f.name
+                    ))
+                else:
+                    result.findings.append(Finding(
+                        "symlink-escape", "critical", "file_access",
+                        f"Symlink escape to external path: {rel} → {target}",
+                        rel, 0, f.name, f.name
+                    ))
+            except OSError:
+                result.findings.append(Finding(
+                    "symlink-broken", "high", "file_access",
+                    f"Broken symlink: {rel} (target does not exist)",
+                    rel, 0, f.name, f.name
+                ))
+
+    # Python AST scan (after regex, for .py files)
+    try:
+        from faro.python_ast import scan_python_ast
+        for file_path in scripts:
+            if file_path.suffix == ".py":
+                result.findings.extend(scan_python_ast(file_path, root))
+    except ImportError:
+        pass
+
     # Risk level
+    if result.findings:
+        # Sort by severity for consistency
+        sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        result.findings.sort(key=lambda f: sev_order.get(f.severity, 99))
+
     if result.critical_count > 0:
         result.risk_level = "critical"
     elif result.high_count > 0:
