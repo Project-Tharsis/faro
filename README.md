@@ -34,7 +34,7 @@ faro list
 # Approve (moves to active, adds to manifest)
 faro approve new-skill
 
-# Or reject (deletes from staging)
+# Or reject (deletes from staging — does NOT touch manifest)
 faro reject bad-skill
 ```
 
@@ -42,8 +42,8 @@ faro reject bad-skill
 
 ```
 Install skill → staging/  →  faro scan  →  faro approve  →  active/
-                                    ↓
-                              faro reject  →  deleted
+                                   ↓
+                             faro reject  →  deleted from staging
 
 Hook (pre_llm_call) warns if unapproved items detected in staging or active.
 ```
@@ -52,16 +52,23 @@ Hook (pre_llm_call) warns if unapproved items detected in staging or active.
 
 | Command | Description |
 |---------|-------------|
-| `faro scan <path>` | Full security scan of a skill/plugin directory |
+| `faro scan <path>` | Full security scan of a skill/plugin directory (path must exist + have markers) |
 | `faro scan --staged` | Scan all staged items |
 | `faro list` | List staged items with risk levels |
 | `faro approve <name>` | Approve staged item → move to active |
-| `faro reject <name>` | Reject staged item → delete |
-| `faro prune --all` | Purge all staging (both skills + plugins) |
+| `faro reject <name>` | Reject staged item → delete from staging (does NOT modify manifest) |
+| `faro prune <skill\|plugin\|all>` | Purge staging (explicit kind required) |
 | `faro vet <name>` | Add already-active item to manifest |
 | `faro check` | Find active items not in manifest |
-| `faro check --deep` | Also verify content hashes |
+| `faro check --deep` | Also verify content hashes (.md/.yaml included) |
 | `faro init-manifest` | Seed manifest with all current items |
+
+### Fail-Closed Behavior
+
+- `faro scan <missing-path>` → error, non-zero exit
+- `faro scan <dir-without-markers>` → error, non-zero exit
+- `faro prune <invalid-kind>` → error, no deletions
+- `faro prune` (no args) → error, requires explicit kind
 
 ## Hook Integration
 
@@ -101,21 +108,25 @@ without touching the real `~/.hermes`.
 ```bash
 pip install -e ".[dev]"
 pytest -q
+# 30 tests: 8 manifest + 6 staging + 4 identity + 6 hashing + 6 fail-closed
 ```
 
 No special setup required — all tests are fully isolated via `FARO_HOME`.
 
 ## Security Rules
 
-Faro runs 19 automated checks across 5 categories:
+Faro runs 31+ automated checks across 8 categories:
 
 | Category | Examples | Severity |
 |----------|----------|----------|
-| Dangerous calls | eval, exec, subprocess, os.system | critical-high |
-| Credential leaks | Cookie DB, Keychain, hardcoded keys | critical-high |
+| Dangerous calls | eval, exec, subprocess, os.system, ctypes | critical-high |
+| Credential leaks | Cookie DB, Keychain, hardcoded keys, .env read, JWT decode | critical-high |
 | Config access | config.yaml read/write | critical-high |
-| Network | Sockets, HTTP requests | low-medium |
+| Shell execution | curl\|sh, wget\|bash, base64 -d\|sh, nc -e, chmod +x | critical-medium |
+| Network | Sockets, HTTP requests, urllib | low-medium |
 | System | Cron/systemd, pip install in scripts | medium-high |
+| JS/TS | child_process, eval(), new Function(), fs readFile, process.env | critical-medium |
+| Package/config | package.json postinstall, direct URL/git deps, Makefile | high-medium |
 
 Each finding has a severity: critical, high, medium, or low.
 Critical and high findings block approval unless `--force` is used.
@@ -124,23 +135,35 @@ Critical and high findings block approval unless `--force` is used.
 
 - **Shallow (default)**: Compares directory structure — file names and paths.
   Catches added/removed/renamed files. Fast enough for the pre_llm_call hook.
-- **Deep (`--deep`)**: Also hashes script file contents (.py, .sh, .js, .ts).
+- **Deep (`--deep`)**: Also hashes file contents for `.py`, `.sh`, `.js`, `.ts`,
+  `.md`, `.yaml`, `.yml`, `.json`, `.toml`, `.cfg`, `.ini`, `.txt`.
   Catches code changes in existing files. Use for manual audits, not in hooks.
 
 Faro does NOT execute any code, analyze call graphs, or sandbox skills.
 It is a heuristic pattern scanner — useful as a first line of defense,
 not a replacement for manual review.
 
-## Manifest
+## Manifest (v2)
 
 Faro maintains `~/.hermes/.faro-manifest.json` — a whitelist of approved
 skills and plugins. Each entry stores:
+
 - Path and kind (skill/plugin)
-- Structure hash (file paths)
-- Content hash (script contents, for deep checks)
+- `relative_path` — path from active root (e.g., `creative/pixel-art`)
+- Structure hash (file paths, full SHA-256 hexdigest)
+- Content hash (file contents, full SHA-256 hexdigest with boundary encoding)
+- `hash_version` — v2
+
+### Key Format
+
+Keys use `kind:relative_path` (e.g., `skill:creative/pixel-art`).
+Old `kind:name` (v1) keys have automatic fallback during lookup with
+path verification. New entries always use v2.
 
 Skills/plugins in active directories that are NOT in the manifest
 are flagged as unvetted.
+
+See [docs/MANIFEST.md](docs/MANIFEST.md) for full schema and migration guide.
 
 ## Directory Conventions
 
@@ -151,7 +174,8 @@ or plugin, required marker files, and directory layout.
 
 - Faro does NOT execute or sandbox skills — it only scans source text
 - Regex-based patterns can produce false positives and false negatives
-- Content hash checks are limited to .py, .sh, .js, .ts files
+- Python `from subprocess import run` patterns may bypass regex rules
+  (planned: AST-level scanner in v0.4.0)
 - Designed for single-user Hermes Agent deployments only
 - Not a substitute for manual review of third-party skills
 

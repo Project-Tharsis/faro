@@ -30,7 +30,7 @@ def cmd_scan(args: list[str]):
             print(to_json([result]))
         else:
             print(to_text([result]))
-        sys.exit(1 if result.risk_level in ("critical", "high") else 0)
+        sys.exit(1 if result.risk_level in ("critical", "high", "error") else 0)
 
 
 def cmd_list(args: list[str]):
@@ -75,7 +75,13 @@ def cmd_reject(args: list[str]):
 
 
 def cmd_prune(args: list[str]):
-    kind = args[0] if args and args[0] in ("skill", "plugin", "all") else "all"
+    if not args:
+        print("Usage: faro prune <skill|plugin|all>")
+        sys.exit(2)
+    kind = args[0]
+    if kind not in ("skill", "plugin", "all"):
+        print(f"Invalid kind: '{kind}'. Must be skill, plugin, or all.")
+        sys.exit(2)
     purge_staging(kind=kind)
 
 

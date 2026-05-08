@@ -5,18 +5,20 @@ skills and plugins. Any skill or plugin in the active directories
 (`~/.hermes/skills/`, `~/.hermes/hermes-agent/plugins/`) that is NOT
 in the manifest is flagged as unvetted.
 
-## Schema
+## Schema (v2)
 
 ```json
 {
-  "skill:pixel-art": {
+  "skill:creative/pixel-art": {
     "name": "pixel-art",
     "path": "/home/user/.hermes/skills/creative/pixel-art",
     "kind": "skill",
-    "structure_hash": "a1b2c3d4e5f6a7b8",
-    "content_hash": "f1e2d3c4b5a69788",
-    "vetted_at": "2026-05-07 12:00:00",
-    "scanner_version": "0.2.0"
+    "relative_path": "creative/pixel-art",
+    "structure_hash": "a1b2c3d4e5f6789...",
+    "content_hash": "f1e2d3c4b5a69788...",
+    "hash_version": 2,
+    "vetted_at": "2026-05-08 12:00:00",
+    "scanner_version": "0.3.0"
   }
 }
 ```
@@ -25,54 +27,69 @@ in the manifest is flagged as unvetted.
 
 | Field | Description |
 |-------|-------------|
-| `name` | Directory name (unique per kind) |
+| `name` | Directory leaf name |
 | `path` | Absolute path to the skill/plugin directory |
 | `kind` | `skill` or `plugin` |
+| `relative_path` | Path relative to active root (e.g., `creative/pixel-art`) |
 | `structure_hash` | SHA-256 of file paths + names (fast, for hook) |
-| `content_hash` | SHA-256 of .py/.sh/.js/.ts file contents (for deep checks) |
+| `content_hash` | SHA-256 of file contents for `.py/.sh/.js/.ts/.md/.yaml/.json/.toml` |
+| `hash_version` | Hash algorithm version (v2 = 2) |
 | `vetted_at` | ISO timestamp of last approval/vet |
 | `scanner_version` | Faro version that generated this entry |
 
-### Key Format
+### Key Format (v2)
 
-Keys use `kind:name` format (e.g., `skill:pixel-art`, `plugin:openai`).
-This prevents name collisions between skills and plugins.
+Keys use `kind:relative_path` format (e.g., `skill:creative/pixel-art`,
+`plugin:model-providers/openai`).
 
-## Hash Verification
+- `relative_path` is computed from the active root:
+  - Skill: `$FARO_HOME/.hermes/skills`
+  - Plugin: `$FARO_HOME/.hermes/hermes-agent/plugins`
+- Fallback: old `kind:name` (v1) keys are still recognized during lookup,
+  with path verification to prevent name-collision bypass.
+
+This prevents:
+- Same-named skills in different parent directories from sharing a manifest entry
+- Plugin subdirectories from being mistaken as independent plugins
+
+## Hash Verification (v2)
 
 ### Structure Hash (default, hook)
 
-The structure hash only includes file paths and names — not contents.
-It detects:
+SHA-256 of file relative paths with length-prefixed encoding and version marker.
+Full 64-char hexdigest. Detects:
 - Added files
 - Removed files
 - Renamed files
 
-It does NOT detect:
-- Changes to file contents (same path, different code)
-
 ### Content Hash (deep, manual)
 
-The content hash includes actual file contents for `.py`, `.sh`, `.js`,
-and `.ts` files. Use `faro check --deep` to verify.
+SHA-256 of file contents with version marker, length-prefixed relative path,
+file size, and content — prevents content-splicing collisions.
+Full 64-char hexdigest. Covers:
+`.py`, `.sh`, `.js`, `.ts`, `.md`, `.yaml`, `.yml`, `.json`, `.toml`,
+`.cfg`, `.ini`, `.txt`
+
+Use `faro check --deep` to verify content hash.
 
 ## Migration
 
-### From v0.1.0 to v0.2.0
+### From v0.2.0 to v0.3.0
 
-Manifest keys changed from bare names to `kind:name` format.
-**Old manifests are NOT compatible.** After upgrading:
+Manifest keys changed from `kind:name` to `kind:relative_path`.
+Hash algorithm upgraded to v2 (full hexdigest, boundary-aware).
+
+**Old manifests have v1 fallback during lookup**, but new entries
+always use v2. To fully migrate:
 
 ```bash
-# Delete old manifest and rebuild
-rm ~/.hermes/.faro-manifest.json
+# Rebuild manifest with v2 keys and hashes
 faro init-manifest
 ```
 
-### Future Schema Changes
-
-Faro is 0.x — manifest schema may change without notice between versions.
-Always check release notes before upgrading.
+After migration, `faro check` will verify v2 hashes. Old v1 entries
+without `hash_version=2` will show as "structure_changed" until
+re-vetted.
 
 ## Operations
 
@@ -87,16 +104,24 @@ faro init-manifest          # Bulk: all current active items
 ### Removing an Entry
 
 ```bash
-faro reject <name>          # From staging (auto-removes from manifest)
 # Manual: edit ~/.hermes/.faro-manifest.json directly
+# reject() no longer removes from manifest — it only clears staging
 ```
 
 ### Checking
 
 ```bash
 faro check                  # Fast: structure hash only
-faro check --deep           # Slow: also checks content hash
+faro check --deep           # Slow: also checks content hash (.md/.yaml included)
 ```
+
+## Fail-Closed Behavior
+
+Faro now enforces strict input validation:
+- `faro scan <missing-path>` → error, non-zero exit
+- `faro scan <unknown-dir>` → error, non-zero exit (no SKILL.md/plugin.yaml/__init__.py)
+- `faro prune <invalid-kind>` → error, no deletions
+- `faro prune` (no args) → error, requires explicit kind
 
 ## Atomicity
 

@@ -16,7 +16,7 @@ from faro.manifest import (
 
 
 def test_key_format():
-    """skill:foo / plugin:foo keys prevent name collision."""
+    """skill:name / plugin:name keys prevent name collision — v2 uses relative_path."""
     import faro.manifest as m
     orig = m._get_manifest_path
     tmp = Path(tempfile.mktemp(suffix=".json"))
@@ -25,17 +25,18 @@ def test_key_format():
         add_to_manifest("same", "/tmp/same-skill", "skill")
         add_to_manifest("same", "/tmp/same-plugin", "plugin")
         data = load_manifest()
-        assert "skill:same" in data, "skill key missing"
-        assert "plugin:same" in data, "plugin key missing"
-        assert data["skill:same"]["kind"] == "skill"
-        assert data["plugin:same"]["kind"] == "plugin"
+        # v2 keys use relative_path (falls back to dir name for paths outside active root)
+        assert "skill:same-skill" in data, f"skill key missing, got: {list(data.keys())}"
+        assert "plugin:same-plugin" in data, f"plugin key missing, got: {list(data.keys())}"
+        assert data["skill:same-skill"]["kind"] == "skill"
+        assert data["plugin:same-plugin"]["kind"] == "plugin"
     finally:
         tmp.unlink(missing_ok=True)
         m._get_manifest_path = orig
 
 
 def test_name_collision_removed():
-    """Remove one doesn't affect the other."""
+    """Remove one doesn't affect the other — v2 keys prevent collision."""
     import faro.manifest as m
     orig = m._get_manifest_path
     tmp = Path(tempfile.mktemp(suffix=".json"))
@@ -45,8 +46,8 @@ def test_name_collision_removed():
         add_to_manifest("same", "/tmp/same-plugin", "plugin")
         remove_from_manifest("same", "skill")
         data = load_manifest()
-        assert "skill:same" not in data
-        assert "plugin:same" in data, "plugin accidentally removed"
+        assert "skill:same-skill" not in data
+        assert "plugin:same-plugin" in data, "plugin accidentally removed"
         remove_from_manifest("same", "plugin")  # cleanup
     finally:
         tmp.unlink(missing_ok=True)

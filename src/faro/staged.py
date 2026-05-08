@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 from faro import get_home
 from faro.scanner import scan_directory
-from faro.manifest import add_to_manifest, remove_from_manifest, _find_skill_dirs
+from faro.manifest import add_to_manifest, _find_skill_dirs
 
 
 def _get_dirs(home: Path | None = None) -> tuple[Path, Path, Path, Path]:
@@ -80,8 +80,8 @@ def reject(name: str, kind: str = "skill") -> bool:
         return False
 
     shutil.rmtree(target)
-    remove_from_manifest(name, kind)
-    print(f"🗑️  Rejected: {kind}/{name} deleted")
+    # reject() only deletes staging — manifest changes are for approve/vet/init-manifest
+    print(f"🗑️  Rejected: {kind}/{name} deleted from staging")
     return True
 
 

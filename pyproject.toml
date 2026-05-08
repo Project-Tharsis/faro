@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "faro"
-version = "0.2.0"
+version = "0.3.0"
 description = "Security audit skill for Hermes Agent — staging, scan, approve pipeline"
 readme = "README.md"
 license = {text = "MIT"}

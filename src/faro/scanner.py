@@ -58,6 +58,28 @@ def _find_files(root: Path, extensions: set[str]) -> list[Path]:
 
 def scan_directory(path: str) -> ScanResult:
     root = Path(path).resolve()
+
+    # Fail closed: path must exist
+    if not root.exists():
+        result = ScanResult(path=str(root), name=Path(path).name, skill_type="unknown")
+        result.risk_level = "error"
+        result.findings.append(Finding(
+            "scan-path-not-found", "critical", "scanner",
+            f"Path not found: {path}", str(root), 0, "", ""
+        ))
+        return result
+
+    # Fail closed: path must have a known marker
+    if not (root / "SKILL.md").exists() and not (root / "plugin.yaml").exists() and not (root / "__init__.py").exists():
+        result = ScanResult(path=str(root), name=root.name, skill_type="unknown")
+        result.risk_level = "error"
+        result.findings.append(Finding(
+            "scan-unknown-target", "critical", "scanner",
+            f"No SKILL.md, plugin.yaml, or __init__.py found — unknown target",
+            str(root), 0, "", ""
+        ))
+        return result
+
     name = root.name
     # Infer type from marker files, not path string
     if (root / "SKILL.md").exists():
