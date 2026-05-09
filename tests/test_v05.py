@@ -437,3 +437,67 @@ def test_vet_symlink_path_errors():
     r = _run_cli(["vet", "evil-link", "--kind", "skill", "--path", str(symlink)])
     assert r.returncode == 2
     assert "symlink" in (r.stderr + r.stdout).lower()
+
+
+def test_list_staged_includes_symlink_dirs():
+    """faro list should show staging symlink dirs as critical."""
+    td = Path(tempfile.mkdtemp())
+    real_target = td / "real-skill"
+    real_target.mkdir()
+    (real_target / "SKILL.md").write_text("# Real\n")
+    staging = td / ".hermes" / "skills-staging"
+    staging.mkdir(parents=True)
+    symlink = staging / "evil-link"
+    symlink.symlink_to(real_target.resolve())
+
+    import os
+    os.environ["FARO_HOME"] = str(td)
+    try:
+        from faro.staged import list_staged
+        items = list_staged()
+        assert len(items) >= 1, f"No items in staging: {items}"
+        assert items[0]["risk_level"] in ("critical", "error")
+    finally:
+        del os.environ["FARO_HOME"]
+
+
+def test_reject_staging_symlink():
+    """faro reject should find and unlink staging symlink dirs."""
+    td = Path(tempfile.mkdtemp())
+    real_target = td / "real-skill"
+    real_target.mkdir()
+    staging = td / ".hermes" / "skills-staging"
+    staging.mkdir(parents=True)
+    symlink = staging / "evil-link"
+    symlink.symlink_to(real_target.resolve())
+
+    import os
+    os.environ["FARO_HOME"] = str(td)
+    try:
+        from faro.staged import reject
+        ok = reject("evil-link", kind="skill")
+        assert ok
+        assert not symlink.exists()
+    finally:
+        del os.environ["FARO_HOME"]
+
+
+def test_prune_staging_includes_symlinks():
+    """faro prune skill should unlink staging symlink dirs."""
+    td = Path(tempfile.mkdtemp())
+    real_target = td / "real-skill"
+    real_target.mkdir()
+    staging = td / ".hermes" / "skills-staging"
+    staging.mkdir(parents=True)
+    symlink = staging / "evil-link"
+    symlink.symlink_to(real_target.resolve())
+
+    import os
+    os.environ["FARO_HOME"] = str(td)
+    try:
+        from faro.staged import purge_staging
+        count = purge_staging(kind="skill")
+        assert count >= 1
+        assert not symlink.exists()
+    finally:
+        del os.environ["FARO_HOME"]

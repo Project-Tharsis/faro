@@ -1,11 +1,15 @@
-"""Staging directory manager — list, approve, reject."""
+"""Staging directory manager — list, approve, reject, prune.
+
+v0.5.3: symlink-aware staging discovery. _find_staged_items now returns
+both real skill/plugin dirs AND symlink dirs. Symlink dirs are hard-blocked
+on approve but discoverable/rejectable/purgeable.
+"""
 
 from pathlib import Path
 import shutil
-import os as _os
 from faro import get_home
 from faro.scanner import scan_directory
-from faro.manifest import add_to_manifest, _find_skill_dirs
+from faro.manifest import add_to_manifest, _find_skill_dirs, _find_symlink_dirs
 
 
 def _get_dirs(home: Path | None = None) -> tuple[Path, Path, Path, Path]:
@@ -16,8 +20,14 @@ def _get_dirs(home: Path | None = None) -> tuple[Path, Path, Path, Path]:
 
 
 def _find_staged_items(staging_dir: Path, kind: str) -> list[Path]:
-    """Recursively find skill/plugin dirs in staging, using kind-aware logic."""
-    return _find_skill_dirs(staging_dir, kind=kind)
+    """Recursively find skill/plugin dirs AND symlink dirs in staging.
+
+    v0.5.3: symlink dirs are included so they can be rejected/pruned.
+    _find_skill_dirs no longer returns symlinks, so we query both.
+    """
+    items = list(_find_skill_dirs(staging_dir, kind=kind))
+    items.extend(_find_symlink_dirs(staging_dir))
+    return items
 
 
 def list_staged() -> list[dict]:
@@ -39,19 +49,19 @@ def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
     staging_dir = skills_staging if kind == "skill" else plugins_staging
     active_dir = skills_active if kind == "skill" else plugins_active
 
-    # Search recursively for the named item
+    # Search recursively for the named item (includes symlink dirs)
     src = None
     for item in _find_staged_items(staging_dir, kind):
         if item.name == name:
             src = item
             break
     if src is None:
-        print(f"❌ '{name}' not found in {kind}s staging")
+        print(f"\u274c '{name}' not found in {kind}s staging")
         return None
 
     # v0.5.1: hard block symlink directories
     if src.is_symlink():
-        print(f"🔴 '{name}' is a symlink directory — blocked (even with --force).")
+        print(f"\U0001f534 '{name}' is a symlink directory — blocked (even with --force).")
         return None
 
     dst = active_dir / name
@@ -63,18 +73,18 @@ def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
     except ValueError:
         pass  # src not under staging (shouldn't happen)
     if not force and dst.exists():
-        print(f"⚠️  '{name}' already active. Use --force to overwrite.")
+        print(f"\u26a0\ufe0f  '{name}' already active. Use --force to overwrite.")
         return None
 
     result = scan_directory(str(src))
     if result.risk_level in ("critical", "high") and not force:
-        print(f"🔴 '{name}' has {result.risk_level} risk ({result.critical_count}C/{result.high_count}H). Use --force.")
+        print(f"\U0001f534 '{name}' has {result.risk_level} risk ({result.critical_count}C/{result.high_count}H). Use --force.")
         return None
 
     # Hard block: external symlinks are path escape, not mitigatable by --force
     symlink_escapes = [f for f in result.findings if f.pattern_id == "symlink-escape"]
     if symlink_escapes:
-        print(f"🔴 '{name}' contains external symlink escape(s):")
+        print(f"\U0001f534 '{name}' contains external symlink escape(s):")
         for s in symlink_escapes:
             print(f"   {s.file}")
         print("   External symlinks are blocked even with --force.")
@@ -84,7 +94,7 @@ def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
         shutil.rmtree(dst)
     shutil.move(str(src), str(dst))
     add_to_manifest(name, str(dst), kind)
-    print(f"✅ Approved: {kind}/{name} → active ({result.risk_level}, {len(result.findings)} findings)")
+    print(f"\u2705 Approved: {kind}/{name} \u2192 active ({result.risk_level}, {len(result.findings)} findings)")
     return str(dst)
 
 
@@ -98,15 +108,14 @@ def reject(name: str, kind: str = "skill") -> bool:
             target = item
             break
     if target is None:
-        print(f"❌ '{name}' not found in {kind}s staging")
+        print(f"\u274c '{name}' not found in {kind}s staging")
         return False
 
     if target.is_symlink():
         target.unlink()
     else:
         shutil.rmtree(target)
-    # reject() only deletes staging — manifest changes are for approve/vet/init-manifest
-    print(f"🗑️  Rejected: {kind}/{name} deleted from staging")
+    print(f"\U0001f5d1\ufe0f  Rejected: {kind}/{name} deleted from staging")
     return True
 
 
@@ -124,5 +133,5 @@ def purge_staging(kind: str = "all") -> int:
             else:
                 shutil.rmtree(item)
             count += 1
-    print(f"🗑️  Purged {count} items from staging")
+    print(f"\U0001f5d1\ufe0f  Purged {count} items from staging")
     return count
