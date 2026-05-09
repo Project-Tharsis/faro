@@ -616,7 +616,7 @@ COMMANDS = {
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print("faro — Hermes Agent Asset Security Pipeline (v0.5)")
+        print("faro — Hermes Agent Asset Security Pipeline (v0.7)")
         print()
         print("Usage: faro <command> [args]")
         print()

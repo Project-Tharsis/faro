@@ -2,9 +2,15 @@
 
 ## What Faro Does
 
-Faro is a **heuristic pattern-based scanner** for Hermes Agent skills and plugins.
-It runs 19 regex-based checks across 5 categories to flag potentially dangerous
-code patterns before a skill becomes active.
+Faro is a **heuristic pattern-based scanner** for Hermes Agent skills, plugins,
+and configurable generic agent assets. It runs 31+ regex-based checks across
+8 categories to flag potentially dangerous code patterns before a skill or
+asset becomes active.
+
+v0.6 added policy-driven generic asset discovery (agents/, hooks/, MCP servers).
+v0.7 added manifest approval metadata with profile-based enforcement
+(personal / team / enterprise) and audit-trail fields (owner, approved_by,
+expires_at, allowed_findings).
 
 ## What Faro Does NOT Do
 
@@ -40,8 +46,7 @@ Faro does NOT protect against:
 - **Shallow (default, used by hook)**: Compares file structure hash.
   Detects added/removed/renamed files. Does NOT detect content changes
   within existing files. Fast enough for every LLM call.
-- **Deep (`faro check --deep`)**: Also compares content hash of
-  .py, .sh, .js, .ts files. Detects code changes after approval.
+- **Deep (`faro check --deep`)**: Also compares content hash of\n  .py, .sh, .js, .ts, .md, .yaml, .yml, .json, .toml, .cfg, .ini, .txt\n  files. Detects code/prompt changes after approval.
   Use for periodic audits or before approving major changes.
 
 ## Reporting a Vulnerability
@@ -64,8 +69,8 @@ interactive platform for Faro's maintainers.
 
 1. Regex patterns can produce false positives (e.g., documentation
    mentioning `eval()` triggers the check)
-2. Content hash only covers .py/.sh/.js/.ts — changes in .md, .yaml,
-   or binary files are not detected by deep checks
+2. Content hash covers .py/.sh/.js/.ts/.md/.yaml/.yml/.json/.toml/.cfg/.ini/.txt —
+   changes in binary files are not detected
 3. Manifest atomicity is best-effort — concurrent writes from multiple
    processes may race (single-user design)
 

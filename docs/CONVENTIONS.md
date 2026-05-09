@@ -70,17 +70,18 @@ Before activation, skills and plugins go through staging:
 Staging mirrors the active directory structure but items here are **not**
 loaded by Hermes Agent until `faro approve` moves them to active.
 
-## Manifest Key Format
+## Manifest Key Format (v2)
 
-Manifest keys use the format `kind:name`:
+Manifest keys use `kind:relative_path` format (v2):
 
 ```
-skill:pixel-art
+skill:creative/pixel-art
+plugin:model-providers/openai
 plugin:google_meet
-plugin:openai
 ```
 
-This prevents name collisions between skills and plugins with the same name.
+This prevents name collisions between skills/plugins in different parent
+directories. Old `kind:name` (v1) keys have automatic fallback during lookup.
 
 ## Adding a New Skill (Recommended Workflow)
 
