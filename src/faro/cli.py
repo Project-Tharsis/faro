@@ -262,9 +262,12 @@ def cmd_vet(args):
     if not p.exists():
         print(f"\u274c Path not found: {path}")
         return
-    add_to_manifest(name, path, kind)
+    try:
+        add_to_manifest(name, path, kind)
+    except ValueError as e:
+        print(f"faro: {e}", file=sys.stderr)
+        sys.exit(2)
     print(f"\u2705 Vetted: {kind}/{name}")
-
 
 def cmd_check(args):
     _validate_args(args)
@@ -299,6 +302,11 @@ def cmd_check(args):
 
 
 def cmd_init_manifest(args):
+    _validate_args(args)
+    if args:
+        print("Usage: faro init-manifest", file=sys.stderr)
+        print("init-manifest takes no arguments.", file=sys.stderr)
+        sys.exit(2)
     count = init_manifest()
     print(f"\u2705 Manifest initialized — {count} items whitelisted")
 

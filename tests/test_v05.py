@@ -10,8 +10,9 @@ from pathlib import Path
 FARO_CLI = [sys.executable, "-m", "faro.cli"]
 
 
-def _run_cli(args, cwd=None):
-    env = {"PYTHONPATH": "src", "FARO_HOME": str(Path(tempfile.mkdtemp()))}
+def _run_cli(args, cwd=None, home=None):
+    faro_home = str(Path(home)) if home else str(Path(tempfile.mkdtemp()))
+    env = {"PYTHONPATH": "src", "FARO_HOME": faro_home}
     result = subprocess.run(
         FARO_CLI + args,
         capture_output=True, text=True, timeout=15,
@@ -363,3 +364,76 @@ def test_symlink_dir_approve_blocked():
         assert result is None, "Symlink dir approve should fail even with force"
     finally:
         del os.environ["FARO_HOME"]
+
+
+# ============================================================
+# v0.5.3 regression tests
+# ============================================================
+
+def test_active_symlink_category_reported_by_check():
+    """Active symlink dir should appear in faro check output as symlink_dir."""
+    td = Path(tempfile.mkdtemp())
+    real_target = td / "real-skill"
+    real_target.mkdir()
+    (real_target / "SKILL.md").write_text("# Real\n")
+    skills = td / ".hermes" / "skills"
+    skills.mkdir(parents=True)
+    symlink = skills / "evil-link"
+    symlink.symlink_to(real_target.resolve())
+
+    r = _run_cli(["check", "--json"], home=td)
+    data = json.loads(r.stdout)
+    symlinks = [u for u in data if u.get("reason") == "symlink_dir"]
+    assert len(symlinks) >= 1, f"No symlink_dir in check: {data}"
+
+
+def test_staged_symlink_category_scanned_critical():
+    """Staged symlink dir should produce critical finding on scan --staged."""
+    td = Path(tempfile.mkdtemp())
+    real_target = td / "real-skill"
+    real_target.mkdir()
+    (real_target / "SKILL.md").write_text("# Real\n")
+    staging = td / ".hermes" / "skills-staging"
+    staging.mkdir(parents=True)
+    symlink = staging / "evil-link"
+    symlink.symlink_to(real_target.resolve())
+
+    r = _run_cli(["scan", "--staged", "--json"], home=td)
+    data = json.loads(r.stdout)
+    assert len(data) >= 1
+    # Should be critical due to symlink-dir-escape
+    assert data[0]["risk_level"] in ("critical", "error")
+
+
+def test_init_manifest_blocks_symlink_dir():
+    """init-manifest should refuse to whitelist symlink directories."""
+    td = Path(tempfile.mkdtemp())
+    real_target = td / "real-skill"
+    real_target.mkdir()
+    (real_target / "SKILL.md").write_text("# Real\n")
+    skills = td / ".hermes" / "skills"
+    skills.mkdir(parents=True)
+    symlink = skills / "evil-link"
+    symlink.symlink_to(real_target.resolve())
+
+    r = _run_cli(["init-manifest"], home=td)
+    assert "blocked" in r.stdout.lower()
+
+
+def test_init_manifest_rejects_flags():
+    """faro init-manifest --bad-flag should exit 2."""
+    r = _run_cli(["init-manifest", "--bad-flag"])
+    assert r.returncode == 2
+
+
+def test_vet_symlink_path_errors():
+    """faro vet with symlink path should error and exit 2."""
+    td = Path(tempfile.mkdtemp())
+    real_target = td / "real-skill"
+    real_target.mkdir()
+    symlink = td / "evil-link"
+    symlink.symlink_to(real_target.resolve())
+
+    r = _run_cli(["vet", "evil-link", "--kind", "skill", "--path", str(symlink)])
+    assert r.returncode == 2
+    assert "symlink" in (r.stderr + r.stdout).lower()

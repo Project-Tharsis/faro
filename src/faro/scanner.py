@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from faro import get_home
 from faro.patterns import ScanPattern, PATTERNS
-from faro.manifest import _find_skill_dirs
+from faro.manifest import _find_skill_dirs, _find_symlink_dirs
 
 
 # ── Categories that get redacted output ─────────────────────────────
@@ -354,6 +354,10 @@ def scan_staging(
     for staging_dir, kind in [(skills_staging, "skill"), (plugins_staging, "plugin")]:
         if not staging_dir.exists():
             continue
+        # v0.5.3: symlink dirs first (always critical/error)
+        for symlink_dir in _find_symlink_dirs(staging_dir):
+            results.append(scan_directory(str(symlink_dir), patterns=patterns, policy_name=policy_name))
+        # Real skill/plugin dirs
         for item in _find_skill_dirs(staging_dir, kind=kind):
             results.append(scan_directory(str(item), patterns=patterns, policy_name=policy_name))
     return results

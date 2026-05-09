@@ -8,23 +8,23 @@ Key format v2: "skill:relative_path" or "plugin:relative_path"
     plugin active root: $FARO_HOME/.hermes/hermes-agent/plugins
 Key format v1 (legacy, fallback only): "skill:name" or "plugin:name"
 
+v0.5.3: symlink-safe directory walking via os.walk(followlinks=False).
+        Symlink dirs are never returned by _find_skill_dirs — they are
+        handled separately via _find_symlink_dirs.
+
 Value: {name, path, kind, relative_path, structure_hash, content_hash,
         vetted_at, scanner_version}
 """
 
 import hashlib
 import json
+import os as _os
 import time
 from pathlib import Path
 from typing import Optional
 from faro import get_home
 
 HASH_VERSION = 2
-
-def _get_manifest_path() -> Path:
-    return get_home() / ".hermes" / ".faro-manifest.json"
-
-
 SCANNER_VERSION = "0.5.0"
 
 # Files whose content we hash for deep checks (v2: expanded set)
@@ -35,11 +35,183 @@ CONTENT_EXTENSIONS = {
 }
 
 
-def _structure_hash(path: Path) -> str:
-    """Hash of directory structure — file paths + names, not contents.
+def _get_manifest_path() -> Path:
+    return get_home() / ".hermes" / ".faro-manifest.json"
 
-    v2: full hexdigest (no truncation), includes version marker.
+
+def _is_excluded(path: Path) -> bool:
+    """Check if any part of the path matches excluded dirs."""
+    return any(part in ("__pycache__", "node_modules", ".git") for part in path.parts)
+
+
+def _walk_dirs_no_symlink_follow(root: Path):
+    """Yield real directories under root without following symlinks.
+
+    Symlink directories are NOT yielded and os.walk will not
+    recurse into them (because we remove them from dirnames).
     """
+    if not root.exists():
+        return
+    for dirpath, dirnames, _ in _os.walk(root, followlinks=False):
+        current = Path(dirpath)
+        kept = []
+        for name in dirnames:
+            p = current / name
+            if p.name.startswith(".") or _is_excluded(p):
+                continue
+            if p.is_symlink():
+                continue  # don't recurse into symlink targets
+            kept.append(name)
+        dirnames[:] = kept
+        for name in kept:
+            yield current / name
+
+
+def _find_symlink_dirs(root: Path) -> list[Path]:
+    """Find all symlink directories under root.
+
+    Returns the symlink paths themselves (not their targets).
+    Does not recurse into symlink targets.
+    """
+    items = []
+    if not root.exists():
+        return items
+    for dirpath, dirnames, _ in _os.walk(root, followlinks=False):
+        current = Path(dirpath)
+        kept = []
+        for name in dirnames:
+            p = current / name
+            if p.name.startswith(".") or _is_excluded(p):
+                continue
+            if p.is_symlink():
+                items.append(p)
+                continue  # don't recurse into symlink targets
+            kept.append(name)
+        dirnames[:] = kept
+    return items
+
+
+def _find_skill_dirs(root: Path, kind: str = "skill") -> list[Path]:
+    """Find leaf skill/plugin directories. Never returns symlink dirs.
+
+    v0.5.3: uses _walk_dirs_no_symlink_follow — never follows symlinks.
+    Skills: dirs containing SKILL.md
+    Plugins: dirs containing plugin.yaml (always a root, absorbs subdirectories)
+             or __init__.py (leaf only, category dirs with child plugins excluded).
+    """
+    items = []
+    plugin_yaml_roots: set[Path] = set()
+
+    for d in _walk_dirs_no_symlink_follow(root):
+        # _walk ensures: real dir, not symlink, not hidden, not excluded
+        if kind == "skill":
+            if (d / "SKILL.md").exists():
+                items.append(d)
+        else:
+            if (d / "plugin.yaml").exists():
+                items.append(d)
+                plugin_yaml_roots.add(d)
+
+    if kind == "plugin":
+        for d in _walk_dirs_no_symlink_follow(root):
+            if d in plugin_yaml_roots:
+                continue
+            if any(d.resolve().is_relative_to(pr.resolve()) for pr in plugin_yaml_roots):
+                continue
+            if (d / "__init__.py").exists():
+                has_child_plugin = False
+                for child in d.iterdir():
+                    if child.is_dir() and (
+                        (child / "plugin.yaml").exists()
+                        or (child / "__init__.py").exists()
+                    ):
+                        has_child_plugin = True
+                        break
+                if not has_child_plugin:
+                    items.append(d)
+
+    return items
+
+
+def _compute_relative_path(item_path: Path, kind: str) -> str:
+    """Compute relative_path from active root for a given kind."""
+    home = get_home()
+    if kind == "skill":
+        active_root = home / ".hermes" / "skills"
+    else:
+        active_root = home / ".hermes" / "hermes-agent" / "plugins"
+    try:
+        return item_path.resolve().relative_to(active_root.resolve()).as_posix()
+    except ValueError:
+        return item_path.name
+
+
+def _manifest_key(name: str, kind: str, relative_path: Optional[str] = None) -> str:
+    if relative_path:
+        return f"{kind}:{relative_path}"
+    return f"{kind}:{name}"
+
+
+def load_manifest() -> dict:
+    mp = _get_manifest_path()
+    if not mp.exists():
+        return {}
+    try:
+        return json.loads(mp.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_manifest(data: dict) -> None:
+    mp = _get_manifest_path()
+    mp.parent.mkdir(parents=True, exist_ok=True)
+    tmp = mp.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    tmp.replace(mp)
+
+
+def add_to_manifest(name: str, path: str, kind: str,
+                    relative_path: Optional[str] = None) -> None:
+    p = Path(path)
+    # v0.5.3: hard block symlink directories
+    if p.is_symlink():
+        raise ValueError(f"Refusing to add symlink directory to manifest: {p}")
+    data = load_manifest()
+    rp = relative_path or _compute_relative_path(p, kind)
+    key = _manifest_key(name, kind, relative_path=rp)
+    data[key] = {
+        "name": name,
+        "path": str(p),
+        "kind": kind,
+        "relative_path": rp,
+        "structure_hash": _structure_hash(p) if p.exists() else "MISSING",
+        "content_hash": _content_hash(p) if p.exists() else "MISSING",
+        "hash_version": HASH_VERSION,
+        "vetted_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "scanner_version": SCANNER_VERSION,
+    }
+    save_manifest(data)
+
+
+def remove_from_manifest(name: str, kind: str, path: Optional[str] = None) -> bool:
+    data = load_manifest()
+    if path is not None:
+        rp = _compute_relative_path(Path(path), kind)
+        key = _manifest_key(name, kind, relative_path=rp)
+        if key in data:
+            del data[key]
+            save_manifest(data)
+            return True
+    for key, entry in list(data.items()):
+        if entry.get("name") == name and entry.get("kind") == kind:
+            del data[key]
+            save_manifest(data)
+            return True
+    return False
+
+
+def _structure_hash(path: Path) -> str:
+    """Hash of directory structure — file paths + names, not contents."""
     hasher = hashlib.sha256()
     hasher.update(b"faro-structure-v2\x00")
     try:
@@ -54,12 +226,7 @@ def _structure_hash(path: Path) -> str:
 
 
 def _content_hash(path: Path) -> str:
-    """Hash of script/text file contents in the directory.
-
-    v2: includes version marker, relpath, file size, content,
-    with length-prefixed separators — prevents content-splicing collisions.
-    Full hexdigest (no truncation).
-    """
+    """Hash of script/text file contents in the directory."""
     hasher = hashlib.sha256()
     hasher.update(b"faro-content-v2\x00")
     try:
@@ -80,165 +247,12 @@ def _content_hash(path: Path) -> str:
     return hasher.hexdigest()
 
 
-def _manifest_key(name: str, kind: str, relative_path: Optional[str] = None) -> str:
-    """Build manifest key.
-
-    v2 (relative_path provided): "skill:creative/foo"
-    v1 fallback (no relative_path): "skill:foo"
-    """
-    if relative_path:
-        return f"{kind}:{relative_path}"
-    return f"{kind}:{name}"
-
-
-def _compute_relative_path(item_path: Path, kind: str) -> str:
-    """Compute relative_path from active root for a given kind.
-    
-    Falls back to directory name if path is not under active root
-    (e.g., during testing with isolated paths).
-    """
-    home = get_home()
-    if kind == "skill":
-        active_root = home / ".hermes" / "skills"
-    else:
-        active_root = home / ".hermes" / "hermes-agent" / "plugins"
-    try:
-        return item_path.resolve().relative_to(active_root.resolve()).as_posix()
-    except ValueError:
-        # Path not under active root — use directory name as fallback
-        return item_path.name
-
-
-def load_manifest() -> dict:
-    mp = _get_manifest_path()
-    if not mp.exists():
-        return {}
-    try:
-        return json.loads(mp.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def save_manifest(data: dict) -> None:
-    """Save manifest atomically via temp file + rename."""
-    mp = _get_manifest_path()
-    mp.parent.mkdir(parents=True, exist_ok=True)
-    tmp = mp.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    tmp.replace(mp)
-
-
-def add_to_manifest(name: str, path: str, kind: str,
-                    relative_path: Optional[str] = None) -> None:
-    data = load_manifest()
-    p = Path(path)
-    rp = relative_path or _compute_relative_path(p, kind)
-    key = _manifest_key(name, kind, relative_path=rp)
-    data[key] = {
-        "name": name,
-        "path": str(p),
-        "kind": kind,
-        "relative_path": rp,
-        "structure_hash": _structure_hash(p) if p.exists() else "MISSING",
-        "content_hash": _content_hash(p) if p.exists() else "MISSING",
-        "hash_version": HASH_VERSION,
-        "vetted_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "scanner_version": SCANNER_VERSION,
-    }
-    save_manifest(data)
-
-
-def remove_from_manifest(name: str, kind: str, path: Optional[str] = None) -> bool:
-    """Remove an entry from manifest by name+kind.
-
-    If path is provided, tries v2 key lookup first (kind:relative_path),
-    then falls back to iterating by name+kind.
-    """
-    data = load_manifest()
-    # Try v2 key with computed relative_path if path provided
-    if path is not None:
-        rp = _compute_relative_path(Path(path), kind)
-        key = _manifest_key(name, kind, relative_path=rp)
-        if key in data:
-            del data[key]
-            save_manifest(data)
-            return True
-
-    # Fallback: search all entries by name + kind (works for any key format)
-    for key, entry in list(data.items()):
-        if entry.get("name") == name and entry.get("kind") == kind:
-            del data[key]
-            save_manifest(data)
-            return True
-    return False
-
-
-def _find_skill_dirs(root: Path, kind: str = "skill") -> list[Path]:
-    """Find leaf skill/plugin directories.
-
-    Skills: dirs containing SKILL.md
-    Plugins: dirs containing plugin.yaml (always a root, absorbs subdirectories)
-             or __init__.py (leaf only, category dirs with child plugins excluded).
-             Subdirectories of a plugin.yaml root are NOT separate plugins.
-    """
-    items = []
-    # First pass: collect all plugin.yaml roots
-    plugin_yaml_roots: set[Path] = set()
-
-    for d in root.rglob("*"):
-        if not d.is_dir() or d.name.startswith("."):
-            continue
-        if any(ex in d.parts for ex in ("__pycache__", "node_modules", ".git")):
-            continue
-        if kind == "skill":
-            if (d / "SKILL.md").exists():
-                items.append(d)
-        else:
-            if (d / "plugin.yaml").exists():
-                items.append(d)
-                plugin_yaml_roots.add(d)
-
-    if kind == "plugin":
-        # Second pass: find __init__.py leaf plugins
-        for d in root.rglob("*"):
-            if not d.is_dir() or d.name.startswith("."):
-                continue
-            if any(ex in d.parts for ex in ("__pycache__", "node_modules", ".git")):
-                continue
-            # Skip dirs already added as plugin.yaml roots
-            if d in plugin_yaml_roots:
-                continue
-            # Skip subdirectories of plugin.yaml roots
-            if any(d.resolve().is_relative_to(pr.resolve()) for pr in plugin_yaml_roots):
-                continue
-            if (d / "__init__.py").exists():
-                # Exclude category dirs with child plugins
-                has_child_plugin = False
-                for child in d.iterdir():
-                    if child.is_dir() and (
-                        (child / "plugin.yaml").exists()
-                        or (child / "__init__.py").exists()
-                    ):
-                        has_child_plugin = True
-                        break
-                if not has_child_plugin:
-                    items.append(d)
-
-    return items
-
-
 def _lookup_entry(manifest: dict, item_path: Path, kind: str, item_name: str) -> Optional[dict]:
-    """Look up a manifest entry for an item, trying v2 key first, then v1 fallback.
-
-    v1 fallback requires path verification to prevent name-collision bypass.
-    """
     rp = _compute_relative_path(item_path, kind)
     key_v2 = _manifest_key(item_name, kind, relative_path=rp)
     entry = manifest.get(key_v2)
     if entry is not None:
         return entry
-
-    # v1 fallback: check kind:name, verify path matches
     key_v1 = _manifest_key(item_name, kind)
     entry_v1 = manifest.get(key_v1)
     if entry_v1 is not None:
@@ -254,7 +268,8 @@ def _lookup_entry(manifest: dict, item_path: Path, kind: str, item_name: str) ->
 def find_unvetted(deep: bool = False) -> list[dict]:
     """Scan active dirs, find items NOT in manifest or with hash mismatch.
 
-    Uses v2 manifest key format (kind:relative_path) with v1 fallback.
+    v0.5.3: symlink dirs detected first (from _find_symlink_dirs),
+    before real skill/plugin dirs (from _find_skill_dirs).
     """
     manifest = load_manifest()
     unvetted = []
@@ -266,18 +281,20 @@ def find_unvetted(deep: bool = False) -> list[dict]:
     ]:
         if not active_dir.exists():
             continue
-        for item in _find_skill_dirs(active_dir, kind=kind):
-            # v0.5.2: detect symlink dirs — always report as critical, not skip
-            if item.is_symlink():
-                unvetted.append({
-                    "name": item.name,
-                    "relative_path": _compute_relative_path(item, kind),
-                    "path": str(item),
-                    "kind": kind,
-                    "reason": "symlink_dir",
-                })
-                continue
 
+        # Phase A: symlink dirs — always critical, never in manifest
+        for symlink_dir in _find_symlink_dirs(active_dir):
+            unvetted.append({
+                "name": symlink_dir.name,
+                "relative_path": _compute_relative_path(symlink_dir, kind),
+                "path": str(symlink_dir),
+                "kind": kind,
+                "reason": "symlink_dir",
+            })
+
+        # Phase B: real skill/plugin dirs
+        for item in _find_skill_dirs(active_dir, kind=kind):
+            # _find_skill_dirs never returns symlink dirs, but check anyway
             entry = _lookup_entry(manifest, item, kind, item.name)
 
             if entry is None:
@@ -290,7 +307,6 @@ def find_unvetted(deep: bool = False) -> list[dict]:
                 })
                 continue
 
-            # In manifest — check structure_hash
             current_struct = _structure_hash(item)
             if current_struct != entry.get("structure_hash"):
                 unvetted.append({
@@ -304,7 +320,6 @@ def find_unvetted(deep: bool = False) -> list[dict]:
                 })
                 continue
 
-            # Deep check: content_hash
             if deep:
                 current_content = _content_hash(item)
                 if current_content != entry.get("content_hash"):
@@ -322,14 +337,21 @@ def find_unvetted(deep: bool = False) -> list[dict]:
 
 
 def init_manifest() -> int:
+    """Rebuild manifest from all active skills/plugins. Skips symlink dirs."""
     home = get_home()
     count = 0
+    blocked = 0
     for active_dir, kind in [
         (home / ".hermes" / "skills", "skill"),
         (home / ".hermes" / "hermes-agent" / "plugins", "plugin"),
     ]:
         if not active_dir.exists():
             continue
+        # Check symlink dirs first — block them
+        for symlink_dir in _find_symlink_dirs(active_dir):
+            print(f"🔴 init-manifest blocked symlink: {symlink_dir}")
+            blocked += 1
+
         for item in _find_skill_dirs(active_dir, kind=kind):
             rp = _compute_relative_path(item, kind)
             path_str = str(item)
@@ -348,4 +370,6 @@ def init_manifest() -> int:
             }
             save_manifest(data)
             count += 1
+    if blocked:
+        print(f"🔴 {blocked} symlink director(ies) blocked — not whitelisted.")
     return count
