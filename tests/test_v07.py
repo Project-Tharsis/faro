@@ -474,6 +474,101 @@ def test_init_manifest_writes_v3_schema():
 
 
 # ============================================================
+# v0.7.1 fixes
+# ============================================================
+
+def test_vet_symlink_escape_hard_block():
+    """vet should refuse to add asset with symlink escape to manifest."""
+    td = Path(tempfile.mkdtemp())
+    active = td / ".hermes" / "skills" / "vet-link-skill"
+    active.mkdir(parents=True)
+    (active / "SKILL.md").write_text("# Link skill\n")
+    ext = td / "external"
+    ext.mkdir()
+    (ext / "secret.txt").write_text("secret\n")
+    sym = active / "link_to_secret"
+    sym.symlink_to(ext / "secret.txt")
+
+    r = _run_cli([
+        "vet", "vet-link-skill",
+        "--path", str(active),
+        "--owner", "u@x.com",
+    ], home=td)
+    # Should exit 2 (hard-block), manifest not created
+    assert r.returncode == 2, f"Expected exit 2, got {r.returncode}"
+    manifest_path = td / ".hermes" / ".faro-manifest.json"
+    assert not manifest_path.exists() or json.loads(manifest_path.read_text()) == {},\
+        f"Manifest should be empty: {manifest_path}"
+
+
+def test_vet_allow_nonexistent_exit_2():
+    """vet --allow with non-existent finding id should exit 2."""
+    td = Path(tempfile.mkdtemp())
+    active = td / ".hermes" / "skills" / "vet-clean"
+    active.mkdir(parents=True)
+    (active / "SKILL.md").write_text("# Clean skill\n")
+
+    r = _run_cli([
+        "vet", "vet-clean",
+        "--path", str(active),
+        "--owner", "u@x.com",
+        "--allow", "does-not-exist",
+    ], home=td)
+    assert r.returncode == 2, f"Expected exit 2, got {r.returncode}"
+
+
+def test_vet_allow_symlink_escape_exit_2():
+    """vet --allow symlink-escape should exit 2."""
+    td = Path(tempfile.mkdtemp())
+    active = td / ".hermes" / "skills" / "vet-clean2"
+    active.mkdir(parents=True)
+    (active / "SKILL.md").write_text("# Clean\n")
+
+    r = _run_cli([
+        "vet", "vet-clean2",
+        "--path", str(active),
+        "--owner", "u@x.com",
+        "--allow", "symlink-escape",
+    ], home=td)
+    assert r.returncode == 2, f"Expected exit 2, got {r.returncode}"
+
+
+def test_team_check_requires_approved_by():
+    """check --profile team should report missing approved_by."""
+    td = Path(tempfile.mkdtemp())
+    active = td / ".hermes" / "skills" / "no-aprv-skill"
+    active.mkdir(parents=True)
+    (active / "SKILL.md").write_text("# No approved_by\n")
+    mf = td / ".hermes" / ".faro-manifest.json"
+    entry = {
+        "skill:no-aprv-skill": {
+            "name": "no-aprv-skill",
+            "path": str(active),
+            "kind": "skill",
+            "relative_path": "no-aprv-skill",
+            "structure_hash": _hash_dir(active),
+            "content_hash": _hash_content(active),
+            "hash_version": 2,
+            "vetted_at": "2026-01-01 00:00:00",
+            "scanner_version": "0.7.0",
+            "approval_schema_version": 3,
+            "owner": "bob@x.com",
+            "approved_by": None,
+            "expires_at": None,
+            "allowed_findings": [],
+        }
+    }
+    mf.parent.mkdir(parents=True, exist_ok=True)
+    mf.write_text(json.dumps(entry))
+
+    r = _run_cli(["check", "--profile", "team", "--json"], home=td)
+    data = json.loads(r.stdout)
+    reasons = [d["reason"] for d in data]
+    assert "approval_metadata_missing" in reasons, \
+        f"Team should require approved_by, got {reasons}"
+
+
+# ============================================================
 # Helpers (mirror manifest.py for test manifest creation)
 # ============================================================
 

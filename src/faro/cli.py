@@ -445,17 +445,31 @@ def cmd_vet(args):
     # Build allowed_findings from scan
     import time as _time
     result = scan_directory(str(p))
+
+    # v0.7.1: hard-block symlink escapes in vet (same as approve)
+    symlink_escapes = [f for f in result.findings
+                       if f.pattern_id in ("symlink-escape", "symlink-dir-escape")]
+    if symlink_escapes:
+        print(f"\U0001f534 '{name}' contains external symlink escape(s):")
+        for s in symlink_escapes:
+            print(f"   {s.file}")
+        print("   External symlinks are blocked — cannot vet this asset.",
+              file=sys.stderr)
+        sys.exit(2)
+
     allowed_findings = []
     symlink_ids = {"symlink-escape", "symlink-dir-escape"}
     for fid in allow_ids:
         if fid in symlink_ids:
-            print(f"\U0001f534 '{fid}' can never be allowed (symlink escape).")
-            return
+            print(f"\U0001f534 '{fid}' can never be allowed (symlink escape).",
+                  file=sys.stderr)
+            sys.exit(2)
         matches = [f for f in result.findings if f.pattern_id == fid]
         if not matches:
             print(f"\u274c No finding with id '{fid}' in current scan. "
-                  "Use --allow only for findings that actually exist.")
-            return
+                  "Use --allow only for findings that actually exist.",
+                  file=sys.stderr)
+            sys.exit(2)
         allowed_findings.append({
             "id": fid,
             "severity": matches[0].severity,

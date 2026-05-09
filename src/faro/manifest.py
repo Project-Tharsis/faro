@@ -351,11 +351,16 @@ def find_unvetted(deep: bool = False, profile: str = "personal") -> list[dict]:
 
         # Check metadata completeness per profile
         if profile == "team":
+            missing = []
             if not owner:
+                missing.append("owner")
+            if not approved_by:
+                missing.append("approved_by")
+            if missing:
                 unvetted.append({
                     "name": item_name, "relative_path": rp, "path": path_str,
                     "kind": k, "reason": "approval_metadata_missing",
-                    "missing": ["owner"],
+                    "missing": missing,
                 })
                 return
         elif profile == "enterprise":
