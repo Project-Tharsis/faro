@@ -243,15 +243,23 @@ def discover_generic_from_policy(
 def _validate_explicit_dir(path_str: str, index: int = 0) -> None:
     """Reject broad/root-like directory paths that would turn Faro into a repo scanner.
 
-    Blocked: ., ./., ../, ~, ~/, /
-    Allowed: ~/.hermes/skills, ~/.hermes/plugins, agents/, hooks/, /abs/path/to/agents
+    Uses Path normalization so ././ and ./. both resolve to . and are rejected.
+    Blocked: . / .. / ~ / / (any spelling)
+    Allowed: ~/.hermes/skills, agents/, hooks/, /abs/path/to/agents
     """
-    BROAD = {".", "./", "..", "../", "~", "~/", "/"}
     stripped = path_str.strip()
-    if stripped in BROAD:
+    p = Path(stripped)
+    # Reject root-like paths (normalized)
+    if p == Path(".") or p == Path("..") or p == Path("~") or p == Path("/"):
         raise ValueError(
             f"Invalid discovery path[{index}]: {path_str!r} is too broad. "
             "Use explicit asset containers (e.g. 'agents/', 'hooks/', '~/.hermes/skills-staging')."
+        )
+    # Reject relative paths with .. segments (escapes the intended scope)
+    if not p.is_absolute() and ".." in p.parts:
+        raise ValueError(
+            f"Invalid discovery path[{index}]: {path_str!r} escapes via '..'. "
+            "Use absolute paths or explicit subdirectories like 'agents/'."
         )
 
 

@@ -270,11 +270,18 @@ discovery:
 
 
 def test_dirs_broad_paths_rejected():
-    """faro scan --dirs . / .. / ~/ / / should exit 2."""
+    """faro scan --dirs . / .. / ~/ / / ./ ././ should exit 2."""
     td = Path(tempfile.mkdtemp())
-    for bad_dir in [".", "..", "~/", "/"]:
+    for bad_dir in [".", "..", "~/", "/", "./", "./.", "././"]:
         r = _run_cli(["scan", "--dirs", bad_dir], cwd=str(td))
         assert r.returncode == 2, f"Expected exit 2 for --dirs {bad_dir!r}, got {r.returncode}"
+
+
+def test_dirs_dotdot_segment_rejected():
+    """faro scan --dirs ../anything should exit 2."""
+    td = Path(tempfile.mkdtemp())
+    r = _run_cli(["scan", "--dirs", "../agents"], cwd=str(td))
+    assert r.returncode == 2, f"Expected exit 2 for --dirs ../agents, got {r.returncode}"
 
 
 def test_dirs_explicit_asset_container_allowed():
