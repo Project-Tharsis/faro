@@ -25,7 +25,7 @@ def _get_manifest_path() -> Path:
     return get_home() / ".hermes" / ".faro-manifest.json"
 
 
-SCANNER_VERSION = "0.3.0"
+SCANNER_VERSION = "0.5.0"
 
 # Files whose content we hash for deep checks (v2: expanded set)
 CONTENT_EXTENSIONS = {
@@ -44,7 +44,7 @@ def _structure_hash(path: Path) -> str:
     hasher.update(b"faro-structure-v2\x00")
     try:
         for f in sorted(path.rglob("*"), key=lambda p: p.relative_to(path).as_posix()):
-            if f.is_file() and "__pycache__" not in f.parts and ".git" not in f.parts:
+            if f.is_file() and not f.is_symlink() and "__pycache__" not in f.parts and ".git" not in f.parts:
                 rel = f.relative_to(path).as_posix().encode("utf-8")
                 hasher.update(len(rel).to_bytes(4, "big"))
                 hasher.update(rel)
@@ -64,7 +64,7 @@ def _content_hash(path: Path) -> str:
     hasher.update(b"faro-content-v2\x00")
     try:
         for f in sorted(path.rglob("*"), key=lambda p: p.relative_to(path).as_posix()):
-            if (f.is_file() and f.suffix in CONTENT_EXTENSIONS
+            if (f.is_file() and not f.is_symlink() and f.suffix in CONTENT_EXTENSIONS
                     and "__pycache__" not in f.parts and ".git" not in f.parts):
                 try:
                     data = f.read_bytes()
