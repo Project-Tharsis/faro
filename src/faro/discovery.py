@@ -33,11 +33,23 @@ class DiscoveredAsset:
 def _find_dirs_by_marker(root: Path, marker_glob: str) -> list[Path]:
     """Find directories under root that contain at least one file matching marker_glob.
 
+    Checks root itself first, then subdirectories.
     Walks symlink-safe. Returns directories (not files).
     """
-    if not root.exists():
+    if not root.exists() or root.is_symlink():
         return []
     dirs_with_marker = set()
+
+    # Check root itself
+    try:
+        for child in root.iterdir():
+            if child.is_file() and child.match(marker_glob):
+                dirs_with_marker.add(root)
+                break
+    except OSError:
+        pass
+
+    # Check subdirectories
     for d in _walk_dirs_no_symlink_follow(root):
         try:
             for child in d.iterdir():
@@ -46,6 +58,7 @@ def _find_dirs_by_marker(root: Path, marker_glob: str) -> list[Path]:
                     break
         except OSError:
             continue
+
     return sorted(dirs_with_marker, key=lambda p: p.as_posix())
 
 
@@ -109,6 +122,19 @@ def discover_generic_from_policy(
             p = base_dir / p
         root = p.resolve() if not p.is_symlink() else p
 
+        # Reject broad/root-like discovery paths
+        _ROOT_LIKE = {Path("."), Path(".."), Path("~"), Path("/")}
+        if Path(path_str) in _ROOT_LIKE:
+            raise ValueError(
+                f"Invalid policy discovery: generic[{i}] path={path_str!r} is too broad. "
+                "Use explicit asset containers like 'agents/', 'hooks/', 'mcp/'."
+            )
+        if base_dir and root.resolve() == base_dir.resolve():
+            raise ValueError(
+                f"Invalid policy discovery: generic[{i}] path={path_str!r} resolves "
+                "to policy directory. Use explicit subdirectories like 'agents/'."
+            )
+
         # Path not found
         if not root.exists():
             assets.append(DiscoveredAsset(
@@ -155,15 +181,6 @@ def discover_generic_from_policy(
                             kind=kind,
                             reason="policy_discovery",
                         ))
-            if not found_dirs:
-                # No marker matches — still return the root as generic
-                assets.append(DiscoveredAsset(
-                    path=root,
-                    name=root.name,
-                    asset_type="generic",
-                    kind=kind,
-                    reason="policy_discovery",
-                ))
         else:
             # No marker — the directory itself is the asset
             if root.is_symlink():
@@ -183,7 +200,13 @@ def discover_generic_from_policy(
                     reason="policy_discovery",
                 ))
 
-    # Also detect symlink dirs under configured paths
+    # Also detect symlink dirs under configured paths.
+    # Skip symlinks that are already children of marker-discovered assets
+    # (those are covered during the parent asset scan).
+    discovered_roots = {
+        a.path.resolve().as_posix()
+        for a in assets if a.reason == "policy_discovery" and a.path.exists()
+    }
     for entry in generics:
         path_str = entry.get("path", "")
         p = Path(path_str)
@@ -191,11 +214,14 @@ def discover_generic_from_policy(
             p = base_dir / p
         if not p.exists() or p.is_symlink():
             continue
-        # Find any symlink dirs within this tree
         for sym_dir in _find_symlink_dirs(p):
-            key = sym_dir.as_posix()
-            if key not in seen_dirs:
-                seen_dirs.add(key)
+            # Skip if symlink lives under an already-discovered asset root
+            sym_posix = sym_dir.as_posix()
+            if any(sym_posix.startswith(dr + "/") or sym_posix == dr
+                   for dr in discovered_roots):
+                continue
+            if sym_posix not in seen_dirs:
+                seen_dirs.add(sym_posix)
                 assets.append(DiscoveredAsset(
                     path=sym_dir,
                     name=sym_dir.name,
@@ -251,8 +277,13 @@ def policy_has_discovery(policy_config: Optional[dict]) -> bool:
     if not policy_config or not isinstance(policy_config, dict):
         return False
     discovery = policy_config.get("discovery")
-    if not isinstance(discovery, dict):
+    if discovery is None:
         return False
+    if not isinstance(discovery, dict):
+        raise ValueError(
+            f"Invalid policy discovery: 'discovery' must be a mapping, "
+            f"got {type(discovery).__name__}"
+        )
     generics = discovery.get("generic")
     if generics is None:
         return False

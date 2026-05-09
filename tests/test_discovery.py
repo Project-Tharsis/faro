@@ -196,6 +196,56 @@ def test_invalid_discovery_config_errors():
     r3 = _run_cli(["scan", "--policy", str(p3)], cwd=str(td))
     assert r3.returncode == 2, f"Expected exit 2, got {r3.returncode}"
 
+    # discovery is a string, not a mapping
+    p4 = td / "bad4.yaml"
+    p4.write_text("version: 1\ndiscovery: string\n")
+    r4 = _run_cli(["scan", "--policy", str(p4)], cwd=str(td))
+    assert r4.returncode == 2, f"Expected exit 2 for discovery-as-string, got {r4.returncode}"
+
+
+def test_no_marker_match_no_fallback():
+    """Marker with no matching files should produce no assets (not fallback to root)."""
+    td = Path(tempfile.mkdtemp())
+    agents = td / "agents"
+    agents.mkdir()
+    (agents / "README.txt").write_text("no markdown here\n")
+    (agents / "config.json").write_text("{}\n")
+
+    policy = td / "policy.yaml"
+    policy.write_text("""
+version: 1
+name: test
+discovery:
+  generic:
+    - path: agents/
+      marker: "*.md"
+""")
+
+    r = _run_cli(["scan", "--policy", str(policy), "--json"], cwd=str(td))
+    # Should produce 0 results — scanning the root dir is NOT a fallback
+    data = json.loads(r.stdout)
+    assert data == [], f"Expected empty results, got {data}"
+    assert r.returncode == 0
+
+
+def test_root_like_paths_rejected():
+    """Root-like paths (. / ~) should exit 2."""
+    td = Path(tempfile.mkdtemp())
+
+    for bad_path in [".", "~/"]:
+        p = td / f"bad-root-{bad_path.replace('/', '-')}.yaml"
+        p.write_text(f"version: 1\ndiscovery:\n  generic:\n    - path: {bad_path}\n      marker: '*.md'\n")
+        r = _run_cli(["scan", "--policy", str(p)], cwd=str(td))
+        assert r.returncode == 2, f"Expected exit 2 for path={bad_path!r}, got {r.returncode}"
+
+    # path that resolves to policy base dir (e.g. ".")
+    p2 = td / "bad-resolves-to-base.yaml"
+    agents_sub = td / "agents"
+    agents_sub.mkdir(exist_ok=True)
+    p2.write_text("version: 1\ndiscovery:\n  generic:\n    - path: ../\n      marker: '*.md'\n")
+    r2 = _run_cli(["scan", "--policy", str(p2)], cwd=str(agents_sub))
+    assert r2.returncode == 2, f"Expected exit 2 for base-dir-resolving path, got {r2.returncode}"
+
 
 def test_report_with_policy_discovery():
     """faro report --policy should use policy discovery."""
