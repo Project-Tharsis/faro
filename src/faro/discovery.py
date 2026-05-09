@@ -129,6 +129,13 @@ def discover_generic_from_policy(
                 f"Invalid policy discovery: generic[{i}] path={path_str!r} is too broad. "
                 "Use explicit asset containers like 'agents/', 'hooks/', 'mcp/'."
             )
+        # Policy relative paths must not escape via .. segments
+        if (not Path(path_str).is_absolute()
+                and ".." in Path(path_str).parts):
+            raise ValueError(
+                f"Invalid policy discovery: generic[{i}] path={path_str!r} escapes "
+                "policy directory via '..'. Use explicit subdirectories like 'agents/'."
+            )
         if base_dir and root.resolve() == base_dir.resolve():
             raise ValueError(
                 f"Invalid policy discovery: generic[{i}] path={path_str!r} resolves "
@@ -233,14 +240,31 @@ def discover_generic_from_policy(
     return assets
 
 
+def _validate_explicit_dir(path_str: str, index: int = 0) -> None:
+    """Reject broad/root-like directory paths that would turn Faro into a repo scanner.
+
+    Blocked: ., ./., ../, ~, ~/, /
+    Allowed: ~/.hermes/skills, ~/.hermes/plugins, agents/, hooks/, /abs/path/to/agents
+    """
+    BROAD = {".", "./", "..", "../", "~", "~/", "/"}
+    stripped = path_str.strip()
+    if stripped in BROAD:
+        raise ValueError(
+            f"Invalid discovery path[{index}]: {path_str!r} is too broad. "
+            "Use explicit asset containers (e.g. 'agents/', 'hooks/', '~/.hermes/skills-staging')."
+        )
+
+
 def discover_explicit_dirs(dirs: list[str]) -> list[DiscoveredAsset]:
     """Wrap explicit --dirs list into DiscoveredAsset list.
 
     Each directory is a generic asset root.
     Symlink dirs are flagged as symlink_dir.
+    Broad/root-like paths (. / .. / ~ / /) are rejected via ValueError.
     """
     assets = []
-    for d in dirs:
+    for i, d in enumerate(dirs):
+        _validate_explicit_dir(d, i)
         p = Path(d)
         if not p.exists():
             assets.append(DiscoveredAsset(

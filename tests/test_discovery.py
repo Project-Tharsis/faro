@@ -267,3 +267,56 @@ discovery:
     r = _run_cli(["report", "--policy", str(policy), "--format", "json"], cwd=str(td))
     data = json.loads(r.stdout)
     assert data["summary"]["assets_scanned"] >= 1
+
+
+def test_dirs_broad_paths_rejected():
+    """faro scan --dirs . / .. / ~/ / / should exit 2."""
+    td = Path(tempfile.mkdtemp())
+    for bad_dir in [".", "..", "~/", "/"]:
+        r = _run_cli(["scan", "--dirs", bad_dir], cwd=str(td))
+        assert r.returncode == 2, f"Expected exit 2 for --dirs {bad_dir!r}, got {r.returncode}"
+
+
+def test_dirs_explicit_asset_container_allowed():
+    """faro scan --dirs with explicit asset container (not broad) should not be rejected."""
+    td = Path(tempfile.mkdtemp())
+    agents_dir = td / "my-agents"
+    agents_dir.mkdir()
+    (agents_dir / "README.md").write_text("# Agents\n")
+
+    r = _run_cli(["scan", "--dirs", str(agents_dir), "--json"], cwd=str(td))
+    assert r.returncode in (0, 1), f"Expected exit 0 or 1, got {r.returncode}"
+    data = json.loads(r.stdout)
+    assert len(data) == 1
+    assert data[0]["type"] == "generic"
+
+
+def test_report_dirs_broad_rejected():
+    """faro report --dirs . should exit 2."""
+    td = Path(tempfile.mkdtemp())
+    r = _run_cli(["report", "--dirs", "."], cwd=str(td))
+    assert r.returncode == 2, f"Expected exit 2, got {r.returncode}"
+
+
+def test_policy_discovery_escape_via_dotdot():
+    """Policy relative path with .. segment should exit 2."""
+    td = Path(tempfile.mkdtemp())
+    # Create a sibling dir to escape to
+    sibling = td / "secret"
+    sibling.mkdir()
+    (sibling / "prompt.md").write_text("# secret\n")
+    sub = td / "sub"
+    sub.mkdir()
+
+    policy = sub / "policy.yaml"
+    policy.write_text("""
+version: 1
+name: test
+discovery:
+  generic:
+    - path: ../secret/
+      marker: "*.md"
+""")
+
+    r = _run_cli(["scan", "--policy", str(policy)], cwd=str(sub))
+    assert r.returncode == 2, f"Expected exit 2 for ../ escape, got {r.returncode}"

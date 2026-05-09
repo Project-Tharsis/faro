@@ -164,10 +164,12 @@ def cmd_scan(args):
 
     if dirs:
         # v0.6: --dirs uses explicit dir discovery
-        results = _scan_assets(
-            discover_explicit_dirs(dirs),
-            patterns=patterns, policy_name=policy_name,
-        )
+        try:
+            assets = discover_explicit_dirs(dirs)
+        except ValueError as e:
+            print(f"faro: Invalid discovery path: {e}", file=sys.stderr)
+            sys.exit(2)
+        results = _scan_assets(assets, patterns=patterns, policy_name=policy_name)
     elif not args or args[0].startswith("--"):
         # Check for policy discovery first (v0.6)
         if policy_path:
@@ -375,10 +377,12 @@ def cmd_report(args):
     patterns, policy_name, policy_config = _get_patterns(policy_path, profile)
 
     if dirs:
-        results = _scan_assets(
-            discover_explicit_dirs(dirs),
-            patterns=patterns, policy_name=policy_name,
-        )
+        try:
+            assets = discover_explicit_dirs(dirs)
+        except ValueError as e:
+            print(f"faro: Invalid discovery path: {e}", file=sys.stderr)
+            sys.exit(2)
+        results = _scan_assets(assets, patterns=patterns, policy_name=policy_name)
     elif policy_path:
         try:
             has_disc = policy_has_discovery(policy_config)

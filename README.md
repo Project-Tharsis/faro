@@ -54,6 +54,8 @@ Hook (pre_llm_call) warns if unapproved items detected in staging or active.
 |---------|-------------|
 | `faro scan <path>` | Full security scan of a skill/plugin directory (path must exist + have markers) |
 | `faro scan --staged` | Scan all staged items |
+| `faro scan --policy <file>` | Scan assets discovered by policy `discovery.generic` config |
+| `faro scan --dirs a,b,c` | Scan explicit generic directories (no marker required) |
 | `faro list` | List staged items with risk levels |
 | `faro approve <name>` | Approve staged item → move to active |
 | `faro reject <name>` | Reject staged item → delete from staging (does NOT modify manifest) |
@@ -61,7 +63,58 @@ Hook (pre_llm_call) warns if unapproved items detected in staging or active.
 | `faro vet <name>` | Add already-active item to manifest |
 | `faro check` | Find active items not in manifest |
 | `faro check --deep` | Also verify content hashes (.md/.yaml included) |
+| `faro report --policy <file>` | Generate aggregate report from policy discovery |
+| `faro report --format markdown\|json` | Output format for report |
 | `faro init-manifest` | Seed manifest with all current items |
+
+### Policy-Driven Discovery (v0.6)
+
+Faro supports scanning generic agent assets — not just Hermes skills/plugins.
+Use an external YAML policy file to declare asset containers:
+
+```yaml
+# policy.yaml
+version: 1
+name: team-agent-policy
+discovery:
+  generic:
+    - path: agents/
+      marker: "*.md"
+      kind: agent_prompt
+    - path: hooks/
+      marker: "*.py"
+      kind: hook
+rules:
+  - id: custom-no-rm-rf
+    severity: critical
+    category: dangerous_call
+    file_glob: "*.{sh,py,md}"
+    regex: "rm\\s+-rf\\s+/"
+    message: "Dangerous delete command"
+```
+
+```bash
+faro scan --policy policy.yaml --json
+faro report --policy policy.yaml --format markdown
+```
+
+### Discovery Path Guardrails
+
+Faro explicitly rejects broad/root-like scan paths to prevent unintended
+repo-wide or full-disk scans:
+
+| Path | Status |
+|------|--------|
+| `.`, `./`, `..`, `../`, `~`, `~/`, `/` | ❌ Rejected (exit 2) |
+| Policy path with `..` segment (e.g. `../agents`) | ❌ Rejected (exit 2) |
+| `~/.hermes/skills-staging` | ✅ Allowed |
+| `~/.hermes/plugins-staging` | ✅ Allowed |
+| `agents/`, `hooks/`, `mcp/` | ✅ Allowed |
+| `/absolute/path/to/explicit/agents` | ✅ Allowed |
+
+Faro is NOT a repo scanner or system scanner. It is designed for explicit
+agent asset containers — Hermes staging dirs, policy-declared directories,
+or user-specified asset directories via `--dirs`.
 
 ### Fail-Closed Behavior
 
@@ -108,7 +161,7 @@ without touching the real `~/.hermes`.
 ```bash
 pip install -e ".[dev]"
 pytest -q
-# 30 tests: 8 manifest + 6 staging + 4 identity + 6 hashing + 6 fail-closed
+# 100 tests: discovery, manifest, staging, scanning, identity, hashing, fail-closed
 ```
 
 No special setup required — all tests are fully isolated via `FARO_HOME`.
