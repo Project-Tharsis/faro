@@ -5,7 +5,7 @@ skills and plugins. Any skill or plugin in the active directories
 (`~/.hermes/skills/`, `~/.hermes/hermes-agent/plugins/`) that is NOT
 in the manifest is flagged as unvetted.
 
-## Schema (v2)
+## Schema (v3)
 
 ```json
 {
@@ -18,7 +18,26 @@ in the manifest is flagged as unvetted.
     "content_hash": "f1e2d3c4b5a69788...",
     "hash_version": 2,
     "vetted_at": "2026-05-08 12:00:00",
-    "scanner_version": "0.3.0"
+    "scanner_version": "0.7.0",
+    "approval_schema_version": 3,
+    "owner": "user@example.com",
+    "approved_by": "reviewer@example.com",
+    "expires_at": "2026-06-08",
+    "approval_reason": "reviewed for personal Hermes skill use",
+    "approval_source": "approve",
+    "migrated_from": null,
+    "allowed_findings": [
+      {
+        "id": "tool-broad-shell",
+        "severity": "high",
+        "count": 1,
+        "files": ["SKILL.md"],
+        "reason": "tool call is constrained by prompt and reviewed manually",
+        "approved_by": "reviewer@example.com",
+        "approved_at": "2026-05-09T12:00:00Z",
+        "expires_at": "2026-06-08"
+      }
+    ]
   }
 }
 ```
@@ -36,6 +55,50 @@ in the manifest is flagged as unvetted.
 | `hash_version` | Hash algorithm version (v2 = 2) |
 | `vetted_at` | ISO timestamp of last approval/vet |
 | `scanner_version` | Faro version that generated this entry |
+| `approval_schema_version` | Schema version for approval fields (v3 = 3) |
+| `owner` | Asset owner email (optional for personal, required for team/enterprise) |
+| `approved_by` | Approver email (optional for personal, required for team/enterprise) |
+| `expires_at` | Expiry date YYYY-MM-DD, or null for no expiry |
+| `approval_reason` | Free-text reason for approval |
+| `approval_source` | `approve`, `vet`, or `init-manifest` |
+| `migrated_from` | Reserved for future migration tracking |
+| `allowed_findings` | List of findings explicitly allowed (audit record, not suppress engine) |
+
+### Approval Metadata (v3)
+
+v0.7 adds approval metadata fields to support audit trails and profile-based
+enforcement. All new fields are **optional** — old manifests without them
+load normally.
+
+```bash
+# Approve with audit trail
+faro approve my-skill --owner alice@corp.com --approved-by bob@corp.com --expires 30d
+
+# Vet an already-active item
+faro vet my-skill --owner alice@corp.com --expires 2026-12-31
+
+# Allow specific findings
+faro approve risky-skill --force --allow tool-broad-shell --reason "reviewed shell access"
+
+# Check with profile enforcement
+faro check --profile team --json
+```
+
+### Profile Behavior
+
+| Profile | Requires owner | Requires approved_by | Requires expiry | Legacy v2 entry |
+|---------|---------------|---------------------|-----------------|-----------------|
+| `personal` (default) | No | No (defaults to owner) | No | Silent |
+| `team` | Yes (exit 2) | Yes (exit 2) | No | Silent |
+| `enterprise` | Yes (exit 2) | Yes (exit 2) | No | Reports `approval_legacy` |
+
+**check reasons (v0.7):**
+
+| Reason | Meaning |
+|--------|---------|
+| `approval_legacy` | Entry has no `approval_schema_version` (enterprise only) |
+| `approval_metadata_missing` | Required fields (owner/approved_by) missing per profile |
+| `approval_expired` | `expires_at` is in the past |
 
 ### Key Format (v2)
 

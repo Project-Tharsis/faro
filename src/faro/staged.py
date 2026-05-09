@@ -3,10 +3,14 @@
 v0.5.3: symlink-aware staging discovery. _find_staged_items now returns
 both real skill/plugin dirs AND symlink dirs. Symlink dirs are hard-blocked
 on approve but discoverable/rejectable/purgeable.
+
+v0.7: approve accepts approval metadata (owner, approved_by, expires_at,
+allowed_findings) for manifest audit trail.
 """
 
 from pathlib import Path
 import shutil
+import time
 from faro import get_home
 from faro.scanner import scan_directory
 from faro.manifest import add_to_manifest, _find_skill_dirs, _find_symlink_dirs
@@ -44,7 +48,10 @@ def list_staged() -> list[dict]:
     return items
 
 
-def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
+def approve(name: str, kind: str = "skill", force: bool = False,
+            owner: str | None = None, approved_by: str | None = None,
+            expires_at: str | None = None, approval_reason: str | None = None,
+            allow_ids: list[str] | None = None) -> str | None:
     skills_staging, skills_active, plugins_staging, plugins_active = _get_dirs()
     staging_dir = skills_staging if kind == "skill" else plugins_staging
     active_dir = skills_active if kind == "skill" else plugins_active
@@ -90,10 +97,39 @@ def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
         print("   External symlinks are blocked even with --force.")
         return None
 
+    # v0.7: build allowed_findings from --allow IDs
+    allowed_findings = []
+    if allow_ids:
+        symlink_ids = {"symlink-escape", "symlink-dir-escape"}
+        for fid in allow_ids:
+            if fid in symlink_ids:
+                raise ValueError(f"'{fid}' can never be allowed (symlink escape).")
+            matches = [f for f in result.findings if f.pattern_id == fid]
+            if not matches:
+                raise ValueError(
+                    f"No finding with id '{fid}' in current scan. "
+                    "Use --allow only for findings that actually exist."
+                )
+            allowed_findings.append({
+                "id": fid,
+                "severity": matches[0].severity,
+                "count": len(matches),
+                "files": [m.file for m in matches],
+                "reason": approval_reason or "allowed at approval time",
+                "approved_by": approved_by or owner or "unknown",
+                "approved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "expires_at": expires_at,
+            })
+
     if dst.exists():
         shutil.rmtree(dst)
     shutil.move(str(src), str(dst))
-    add_to_manifest(name, str(dst), kind)
+    add_to_manifest(name, str(dst), kind,
+                    owner=owner, approved_by=approved_by,
+                    expires_at=expires_at,
+                    approval_reason=approval_reason,
+                    allowed_findings=allowed_findings if allowed_findings else None,
+                    approval_source="approve")
     print(f"\u2705 Approved: {kind}/{name} \u2192 active ({result.risk_level}, {len(result.findings)} findings)")
     return str(dst)
 

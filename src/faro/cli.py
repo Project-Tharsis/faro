@@ -25,11 +25,12 @@ KNOWN_FLAGS = {
     "--json", "--full", "--policy", "--dirs", "--profile",
     "--kind", "--force", "--owner", "--expires", "--path",
     "--format", "--staged", "--deep", "--help",
+    "--approved-by", "--allow", "--reason",
 }
 
-
 VALUE_FLAGS = {"--policy", "--dirs", "--profile", "--kind",
-               "--owner", "--expires", "--path", "--format"}
+               "--owner", "--expires", "--path", "--format",
+               "--approved-by", "--allow", "--reason"}
 
 
 def _validate_args(args):
@@ -93,7 +94,42 @@ def _parse_profile(args):
     for i, a in enumerate(args):
         if a == "--profile" and i + 1 < len(args):
             return args[i + 1]
-    return ""
+    return "personal"
+
+
+def _parse_repeated(args, flag: str) -> list[str]:
+    """Parse a flag that can appear multiple times (e.g. --allow)."""
+    result = []
+    for i, a in enumerate(args):
+        if a == flag and i + 1 < len(args):
+            result.append(args[i + 1])
+    return result
+
+
+def _parse_single(args, flag: str) -> str:
+    """Parse a flag that takes a single value (last wins)."""
+    result = ""
+    for i, a in enumerate(args):
+        if a == flag and i + 1 < len(args):
+            result = args[i + 1]
+    return result
+
+
+def _resolve_approved_by(args, owner: str, profile: str) -> str | None:
+    """Resolve --approved-by per profile rules.
+
+    Order: 1. --approved-by flag  2. FARO_APPROVER env  3. owner (personal only)
+    """
+    import os as _os
+    explicit = _parse_single(args, "--approved-by")
+    if explicit:
+        return explicit
+    env_val = _os.environ.get("FARO_APPROVER")
+    if env_val:
+        return env_val
+    if profile == "personal" and owner:
+        return owner
+    return None
 
 
 def _get_patterns(policy_path="", profile=""):
@@ -242,19 +278,68 @@ def cmd_list(args):
 def cmd_approve(args):
     _validate_args(args)
     if not args:
-        print("Usage: faro approve <name> [--kind skill|plugin] [--force]")
+        print("Usage: faro approve <name> [--kind skill|plugin] [--force] "
+              "[--owner <email>] [--approved-by <email>] [--expires <Nd|date|never>] "
+              "[--allow <id>]... [--reason <text>] [--profile <name>]")
         return
     name = args[0]
-    kind = "skill"
-    force = False
+    kwargs: dict = {"name": name}
+
+    # Basic flags
     for i, a in enumerate(args):
         if a == "--kind" and i + 1 < len(args):
-            kind = args[i + 1]
+            kwargs["kind"] = args[i + 1]
         if a == "--force":
-            force = True
-        # NOTE: --owner and --expires are v0.7 scope (manifest extension)
-        # They are accepted but not yet written to manifest.
-    result = approve(name, kind=kind, force=force)
+            kwargs["force"] = True
+        if a == "--reason" and i + 1 < len(args):
+            kwargs["approval_reason"] = args[i + 1]
+
+    profile = _parse_profile(args)
+    if profile not in ("personal", "team", "enterprise"):
+        print(f"faro: unknown profile {profile!r}. Use personal, team, or enterprise.",
+              file=sys.stderr)
+        sys.exit(2)
+
+    # Owner
+    owner = _parse_single(args, "--owner") or None
+
+    # Approved-by: resolved by rules
+    approved_by = _resolve_approved_by(args, owner or "", profile)
+
+    # Profile enforcement
+    if profile in ("team", "enterprise"):
+        if not owner:
+            print(f"faro: --profile {profile} requires --owner <email>", file=sys.stderr)
+            sys.exit(2)
+        if not approved_by:
+            print(f"faro: --profile {profile} requires --approved-by <email> "
+                  "or set FARO_APPROVER env", file=sys.stderr)
+            sys.exit(2)
+
+    kwargs["owner"] = owner
+    kwargs["approved_by"] = approved_by
+
+    # Expires
+    expires_str = _parse_single(args, "--expires")
+    if expires_str:
+        try:
+            from faro.manifest import _parse_expires
+            kwargs["expires_at"] = _parse_expires(expires_str)
+        except ValueError as e:
+            print(f"faro: {e}", file=sys.stderr)
+            sys.exit(2)
+
+    # Allowed findings
+    allow_ids = _parse_repeated(args, "--allow")
+    if allow_ids:
+        kwargs["allow_ids"] = allow_ids
+
+    result = None
+    try:
+        result = approve(**kwargs)
+    except ValueError as e:
+        print(f"faro: {e}", file=sys.stderr)
+        sys.exit(2)
     if result is None:
         sys.exit(1)
 
@@ -289,16 +374,57 @@ def cmd_prune(args):
 def cmd_vet(args):
     _validate_args(args)
     if not args:
-        print("Usage: faro vet <name> [--kind skill|plugin] [--path <path>]")
+        print("Usage: faro vet <name> [--kind skill|plugin] [--path <path>] "
+              "[--owner <email>] [--approved-by <email>] [--expires <Nd|date|never>] "
+              "[--allow <id>]... [--reason <text>] [--profile <name>]")
         return
     name = args[0]
     kind = "skill"
     path = None
+    owner = None
+    profile = _parse_profile(args)
+    if profile not in ("personal", "team", "enterprise"):
+        print(f"faro: unknown profile {profile!r}. Use personal, team, or enterprise.",
+              file=sys.stderr)
+        sys.exit(2)
+
     for i, a in enumerate(args):
         if a == "--kind" and i + 1 < len(args):
             kind = args[i + 1]
         if a == "--path" and i + 1 < len(args):
             path = args[i + 1]
+        if a == "--owner" and i + 1 < len(args):
+            owner = args[i + 1]
+
+    approved_by = _resolve_approved_by(args, owner or "", profile)
+
+    # Profile enforcement
+    if profile in ("team", "enterprise"):
+        if not owner:
+            print(f"faro: --profile {profile} requires --owner <email>", file=sys.stderr)
+            sys.exit(2)
+        if not approved_by:
+            print(f"faro: --profile {profile} requires --approved-by <email> "
+                  "or set FARO_APPROVER env", file=sys.stderr)
+            sys.exit(2)
+
+    # Expires
+    expires_at = None
+    expires_str = _parse_single(args, "--expires")
+    if expires_str:
+        try:
+            from faro.manifest import _parse_expires
+            expires_at = _parse_expires(expires_str)
+        except ValueError as e:
+            print(f"faro: {e}", file=sys.stderr)
+            sys.exit(2)
+
+    # Reason
+    reason = _parse_single(args, "--reason") or None
+
+    # Allowed findings — scan first to validate IDs
+    allow_ids = _parse_repeated(args, "--allow")
+
     if not path:
         home = get_home()
         base = home / ".hermes" / "skills" if kind == "skill" else home / ".hermes" / "hermes-agent" / "plugins"
@@ -315,8 +441,39 @@ def cmd_vet(args):
     if not p.exists():
         print(f"\u274c Path not found: {path}")
         return
+
+    # Build allowed_findings from scan
+    import time as _time
+    result = scan_directory(str(p))
+    allowed_findings = []
+    symlink_ids = {"symlink-escape", "symlink-dir-escape"}
+    for fid in allow_ids:
+        if fid in symlink_ids:
+            print(f"\U0001f534 '{fid}' can never be allowed (symlink escape).")
+            return
+        matches = [f for f in result.findings if f.pattern_id == fid]
+        if not matches:
+            print(f"\u274c No finding with id '{fid}' in current scan. "
+                  "Use --allow only for findings that actually exist.")
+            return
+        allowed_findings.append({
+            "id": fid,
+            "severity": matches[0].severity,
+            "count": len(matches),
+            "files": [m.file for m in matches],
+            "reason": reason or "allowed at vet time",
+            "approved_by": approved_by or owner or "unknown",
+            "approved_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at": expires_at,
+        })
+
     try:
-        add_to_manifest(name, path, kind)
+        add_to_manifest(name, path, kind,
+                        owner=owner, approved_by=approved_by,
+                        expires_at=expires_at,
+                        approval_reason=reason,
+                        allowed_findings=allowed_findings if allowed_findings else None,
+                        approval_source="vet")
     except ValueError as e:
         print(f"faro: {e}", file=sys.stderr)
         sys.exit(2)
@@ -326,8 +483,13 @@ def cmd_check(args):
     _validate_args(args)
     deep = "--deep" in args
     json_mode = "--json" in args
+    profile = _parse_profile(args)
+    if profile not in ("personal", "team", "enterprise"):
+        print(f"faro: unknown profile {profile!r}. Use personal, team, or enterprise.",
+              file=sys.stderr)
+        sys.exit(2)
 
-    unvetted = find_unvetted(deep=deep)
+    unvetted = find_unvetted(deep=deep, profile=profile)
     if json_mode:
         import json as _json
         print(_json.dumps(unvetted, indent=2, ensure_ascii=False))

@@ -19,13 +19,16 @@ Value: {name, path, kind, relative_path, structure_hash, content_hash,
 import hashlib
 import json
 import os as _os
+import re
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from faro import get_home
 
 HASH_VERSION = 2
-SCANNER_VERSION = "0.5.0"
+SCANNER_VERSION = "0.7.0"
+APPROVAL_SCHEMA_VERSION = 3
 
 # Files whose content we hash for deep checks (v2: expanded set)
 CONTENT_EXTENSIONS = {
@@ -170,8 +173,48 @@ def save_manifest(data: dict) -> None:
     tmp.replace(mp)
 
 
+def _parse_expires(value: str) -> str | None:
+    """Parse --expires flag into ISO date string or None.
+
+    Supported formats:
+    - \"never\" or \"\" → None
+    - \"Nd\" or \"N d\" (e.g., \"30d\", \"7d\") → today + N days
+    - \"YYYY-MM-DD\" → validated future date
+
+    Raises ValueError on invalid/expired input.
+    """
+    v = value.strip().lower() if value else ""
+    if not v or v == "never":
+        return None
+    # "Nd" or "N d" format
+    m = re.match(r"^(\d+)\s*d$", v)
+    if m:
+        days = int(m.group(1))
+        dt = datetime.now() + timedelta(days=days)
+        return dt.strftime("%Y-%m-%d")
+    # "YYYY-MM-DD" format
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+        try:
+            dt = datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"Invalid expiry date: {value!r}")
+        if dt.date() <= datetime.now().date():
+            raise ValueError(f"Expiry date must be in the future: {value!r}")
+        return v
+    raise ValueError(
+        f"Invalid --expires format: {value!r}. "
+        "Use '30d' (days), 'YYYY-MM-DD' (future date), or 'never'."
+    )
+
+
 def add_to_manifest(name: str, path: str, kind: str,
-                    relative_path: Optional[str] = None) -> None:
+                    relative_path: Optional[str] = None,
+                    owner: Optional[str] = None,
+                    approved_by: Optional[str] = None,
+                    expires_at: Optional[str] = None,
+                    approval_reason: Optional[str] = None,
+                    allowed_findings: Optional[list] = None,
+                    approval_source: str = "approve") -> None:
     p = Path(path)
     # v0.5.3: hard block symlink directories
     if p.is_symlink():
@@ -189,6 +232,14 @@ def add_to_manifest(name: str, path: str, kind: str,
         "hash_version": HASH_VERSION,
         "vetted_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "scanner_version": SCANNER_VERSION,
+        "approval_schema_version": APPROVAL_SCHEMA_VERSION,
+        "owner": owner,
+        "approved_by": approved_by,
+        "expires_at": expires_at,
+        "approval_reason": approval_reason,
+        "approval_source": approval_source,
+        "migrated_from": None,
+        "allowed_findings": allowed_findings or [],
     }
     save_manifest(data)
 
@@ -265,8 +316,14 @@ def _lookup_entry(manifest: dict, item_path: Path, kind: str, item_name: str) ->
     return None
 
 
-def find_unvetted(deep: bool = False) -> list[dict]:
+def find_unvetted(deep: bool = False, profile: str = "personal") -> list[dict]:
     """Scan active dirs, find items NOT in manifest or with hash mismatch.
+
+    v0.7: added profile-aware approval metadata checks.
+    - personal: reports approval_expired if expires_at is past.
+    - team: reports approval_metadata_missing (no owner), approval_expired.
+    - enterprise: reports approval_metadata_missing (no owner/approved_by),
+      approval_legacy (no approval_schema_version), approval_expired.
 
     v0.5.3: symlink dirs detected first (from _find_symlink_dirs),
     before real skill/plugin dirs (from _find_skill_dirs).
@@ -274,6 +331,60 @@ def find_unvetted(deep: bool = False) -> list[dict]:
     manifest = load_manifest()
     unvetted = []
     home = get_home()
+    today = datetime.now().date()
+
+    def _check_approval(entry: dict, item_name: str, rp: str, path_str: str, k: str):
+        """Check approval metadata for a manifest entry. Appends to unvetted."""
+        schema_ver = entry.get("approval_schema_version")
+
+        # Legacy v2 entry — no approval_schema_version
+        if schema_ver is None:
+            if profile == "enterprise":
+                unvetted.append({
+                    "name": item_name, "relative_path": rp, "path": path_str,
+                    "kind": k, "reason": "approval_legacy",
+                })
+            return
+
+        owner = entry.get("owner")
+        approved_by = entry.get("approved_by")
+
+        # Check metadata completeness per profile
+        if profile == "team":
+            if not owner:
+                unvetted.append({
+                    "name": item_name, "relative_path": rp, "path": path_str,
+                    "kind": k, "reason": "approval_metadata_missing",
+                    "missing": ["owner"],
+                })
+                return
+        elif profile == "enterprise":
+            missing = []
+            if not owner:
+                missing.append("owner")
+            if not approved_by:
+                missing.append("approved_by")
+            if missing:
+                unvetted.append({
+                    "name": item_name, "relative_path": rp, "path": path_str,
+                    "kind": k, "reason": "approval_metadata_missing",
+                    "missing": missing,
+                })
+                return
+
+        # Check expiry
+        expires_str = entry.get("expires_at")
+        if expires_str:
+            try:
+                expires_date = datetime.strptime(expires_str, "%Y-%m-%d").date()
+                if expires_date <= today:
+                    unvetted.append({
+                        "name": item_name, "relative_path": rp, "path": path_str,
+                        "kind": k, "reason": "approval_expired",
+                        "expires_at": expires_str,
+                    })
+            except ValueError:
+                pass  # unparseable expiry — skip, don't crash
 
     for active_dir, kind in [
         (home / ".hermes" / "skills", "skill"),
@@ -332,6 +443,12 @@ def find_unvetted(deep: bool = False) -> list[dict]:
                         "expected_hash": entry.get("content_hash"),
                         "actual_hash": current_content,
                     })
+                    continue
+
+            # v0.7: approval metadata check (only for hash-valid entries)
+            _check_approval(entry, item.name,
+                            _compute_relative_path(item, kind),
+                            str(item), kind)
 
     return unvetted
 
@@ -367,6 +484,14 @@ def init_manifest() -> int:
                 "hash_version": HASH_VERSION,
                 "vetted_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "scanner_version": SCANNER_VERSION,
+                "approval_schema_version": APPROVAL_SCHEMA_VERSION,
+                "owner": None,
+                "approved_by": None,
+                "expires_at": None,
+                "approval_reason": None,
+                "approval_source": "init-manifest",
+                "migrated_from": None,
+                "allowed_findings": [],
             }
             save_manifest(data)
             count += 1

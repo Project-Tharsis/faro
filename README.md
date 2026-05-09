@@ -57,7 +57,7 @@ Hook (pre_llm_call) warns if unapproved items detected in staging or active.
 | `faro scan --policy <file>` | Scan assets discovered by policy `discovery.generic` config |
 | `faro scan --dirs a,b,c` | Scan explicit generic directories (no marker required) |
 | `faro list` | List staged items with risk levels |
-| `faro approve <name>` | Approve staged item → move to active |
+| `faro approve <name>` | Approve staged item → move to active. Use `--owner`, `--approved-by`, `--expires`, `--allow`, `--reason` for audit trail |
 | `faro reject <name>` | Reject staged item → delete from staging (does NOT modify manifest) |
 | `faro prune <skill\|plugin\|all>` | Purge staging (explicit kind required) |
 | `faro vet <name>` | Add already-active item to manifest |
@@ -115,6 +115,36 @@ repo-wide or full-disk scans:
 Faro is NOT a repo scanner or system scanner. It is designed for explicit
 agent asset containers — Hermes staging dirs, policy-declared directories,
 or user-specified asset directories via `--dirs`.
+
+### Approval Metadata (v0.7)
+
+`faro approve` and `faro vet` support audit-trail metadata:
+
+```bash
+# Approve with owner, expiry, and allowed findings
+faro approve my-skill \
+  --owner alice@corp.com \
+  --approved-by bob@corp.com \
+  --expires 30d \
+  --allow tool-broad-shell --reason "reviewed shell access"
+
+# Vet an already-active item
+faro vet my-skill --owner alice@corp.com --expires 2026-12-31
+
+# Check with profile enforcement
+faro check --profile team --json
+```
+
+| Profile | Requires owner | Requires approved_by | Requires expiry |
+|---------|---------------|---------------------|-----------------|
+| `personal` (default) | No | No (defaults to owner) | No |
+| `team` | Yes | Yes | No |
+| `enterprise` | Yes | Yes | No |
+
+`check --profile` reports: `approval_legacy` (no v3 schema), `approval_metadata_missing`
+(missing required fields), `approval_expired` (past expiry date).
+
+All new fields are **optional** — old manifest entries load without migration.
 
 ### Fail-Closed Behavior
 
