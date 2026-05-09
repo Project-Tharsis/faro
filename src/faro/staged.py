@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import shutil
+import os as _os
 from faro import get_home
 from faro.scanner import scan_directory
 from faro.manifest import add_to_manifest, _find_skill_dirs
@@ -100,7 +101,10 @@ def reject(name: str, kind: str = "skill") -> bool:
         print(f"❌ '{name}' not found in {kind}s staging")
         return False
 
-    shutil.rmtree(target)
+    if target.is_symlink():
+        target.unlink()
+    else:
+        shutil.rmtree(target)
     # reject() only deletes staging — manifest changes are for approve/vet/init-manifest
     print(f"🗑️  Rejected: {kind}/{name} deleted from staging")
     return True
@@ -115,7 +119,10 @@ def purge_staging(kind: str = "all") -> int:
         if not staging_dir.exists():
             continue
         for item in _find_staged_items(staging_dir, k):
-            shutil.rmtree(item)
+            if item.is_symlink():
+                item.unlink()
+            else:
+                shutil.rmtree(item)
             count += 1
     print(f"🗑️  Purged {count} items from staging")
     return count

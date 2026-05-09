@@ -188,9 +188,6 @@ def _find_skill_dirs(root: Path, kind: str = "skill") -> list[Path]:
     for d in root.rglob("*"):
         if not d.is_dir() or d.name.startswith("."):
             continue
-        # v0.5.1: skip symlink directories
-        if d.is_symlink():
-            continue
         if any(ex in d.parts for ex in ("__pycache__", "node_modules", ".git")):
             continue
         if kind == "skill":
@@ -270,6 +267,17 @@ def find_unvetted(deep: bool = False) -> list[dict]:
         if not active_dir.exists():
             continue
         for item in _find_skill_dirs(active_dir, kind=kind):
+            # v0.5.2: detect symlink dirs — always report as critical, not skip
+            if item.is_symlink():
+                unvetted.append({
+                    "name": item.name,
+                    "relative_path": _compute_relative_path(item, kind),
+                    "path": str(item),
+                    "kind": kind,
+                    "reason": "symlink_dir",
+                })
+                continue
+
             entry = _lookup_entry(manifest, item, kind, item.name)
 
             if entry is None:

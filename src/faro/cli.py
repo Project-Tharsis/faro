@@ -104,7 +104,14 @@ def _get_patterns(policy_path="", profile=""):
             policy_name = "profile:personal"
 
     if policy_path:
-        patterns = load_policy(policy_path)
+        try:
+            patterns = load_policy(policy_path)
+        except FileNotFoundError:
+            print(f"faro: Policy file not found: {policy_path}", file=sys.stderr)
+            sys.exit(2)
+        except Exception as e:
+            print(f"faro: Failed to load policy: {e}", file=sys.stderr)
+            sys.exit(2)
         try:
             policy_config = load_policy_config(policy_path)
             policy_name = policy_config.get("name", Path(policy_path).stem)
@@ -161,6 +168,7 @@ def cmd_scan(args):
 
 
 def cmd_list(args):
+    _validate_args(args)
     items = list_staged()
     json_mode = "--json" in args
     if not items:
@@ -179,6 +187,7 @@ def cmd_list(args):
 
 
 def cmd_approve(args):
+    _validate_args(args)
     if not args:
         print("Usage: faro approve <name> [--kind skill|plugin] [--force]")
         return
@@ -198,6 +207,7 @@ def cmd_approve(args):
 
 
 def cmd_reject(args):
+    _validate_args(args)
     if not args:
         print("Usage: faro reject <name> [--kind skill|plugin]")
         return
@@ -212,6 +222,7 @@ def cmd_reject(args):
 
 
 def cmd_prune(args):
+    _validate_args(args)
     if not args:
         print("Usage: faro prune <skill|plugin|all>")
         sys.exit(2)
@@ -223,6 +234,7 @@ def cmd_prune(args):
 
 
 def cmd_vet(args):
+    _validate_args(args)
     if not args:
         print("Usage: faro vet <name> [--kind skill|plugin] [--path <path>]")
         return
@@ -273,12 +285,14 @@ def cmd_check(args):
     for u in unvetted:
         reason = u.get("reason", "not_in_manifest")
         icon_map = {"not_in_manifest": "\U0001f534", "structure_changed": "\U0001f7e0",
-                    "content_changed": "\U0001f7e1"}
+                    "content_changed": "\U0001f7e1", "symlink_dir": "\U0001f534"}
         icon = icon_map.get(reason, "\U0001f534")
         print(f"  {icon} [{u['kind']:6s}] {u['name']}")
         print(f"      reason: {reason}")
         if reason == "not_in_manifest":
             print(f"      \u2192 faro vet {u['name']} --kind {u['kind']}")
+        elif reason == "symlink_dir":
+            print(f"      Symlink directory must be replaced with a real directory.")
         else:
             print(f"      path: {u['path']}")
             print(f"      \u2192 faro vet {u['name']} --kind {u['kind']}  (to update manifest hash)")
