@@ -46,7 +46,9 @@ Faro does NOT protect against:
 - **Shallow (default, used by hook)**: Compares file structure hash.
   Detects added/removed/renamed files. Does NOT detect content changes
   within existing files. Fast enough for every LLM call.
-- **Deep (`faro check --deep`)**: Also compares content hash of\n  .py, .sh, .js, .ts, .md, .yaml, .yml, .json, .toml, .cfg, .ini, .txt\n  files. Detects code/prompt changes after approval.
+- **Deep (`faro check --deep`)**: Also compares content hash of
+  .py, .sh, .js, .ts, .md, .yaml, .yml, .json, .toml, .cfg, .ini, .txt
+  files. Detects code/prompt changes after approval.
   Use for periodic audits or before approving major changes.
 
 ## Reporting a Vulnerability
