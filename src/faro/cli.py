@@ -11,6 +11,12 @@ from faro.reporter import to_text, to_json, summary_line, report_markdown, repor
 from faro.staged import list_staged, approve, reject, purge_staging
 from faro.manifest import add_to_manifest, remove_from_manifest, find_unvetted, load_manifest, init_manifest
 from faro.patterns import load_policy, load_policy_config
+from faro.discovery import (
+    discover_generic_from_policy,
+    discover_explicit_dirs,
+    policy_has_discovery,
+    DiscoveredAsset,
+)
 
 
 # ── Built-in profiles ──────────────────────────────────────────────
@@ -125,6 +131,27 @@ def _get_patterns(policy_path="", profile=""):
 
 # ── Commands ────────────────────────────────────────────────────────
 
+def _scan_assets(assets, patterns=None, policy_name=""):
+    """Scan a list of DiscoveredAsset objects into ScanResult list.
+
+    v0.6: handles error assets (path_not_found, symlink_dir) directly.
+    """
+    results = []
+    for a in assets:
+        if a.reason == "path_not_found":
+            result = scan_directory(str(a.path), patterns=patterns, policy_name=policy_name)
+            results.append(result)
+        else:
+            result = scan_directory(
+                str(a.path),
+                patterns=patterns,
+                policy_name=policy_name,
+                require_marker=False,
+            )
+            results.append(result)
+    return results
+
+
 def cmd_scan(args):
     _validate_args(args)
     json_mode = "--json" in args
@@ -133,12 +160,36 @@ def cmd_scan(args):
     profile = _parse_profile(args)
     dirs = _parse_dirs(args)
 
-    patterns, policy_name, _ = _get_patterns(policy_path, profile)
+    patterns, policy_name, policy_config = _get_patterns(policy_path, profile)
 
     if dirs:
-        results = scan_dirs(dirs, patterns=patterns, policy_name=policy_name)
+        # v0.6: --dirs uses explicit dir discovery
+        results = _scan_assets(
+            discover_explicit_dirs(dirs),
+            patterns=patterns, policy_name=policy_name,
+        )
     elif not args or args[0].startswith("--"):
-        results = scan_staging(patterns=patterns, policy_name=policy_name)
+        # Check for policy discovery first (v0.6)
+        if policy_path:
+            try:
+                has_disc = policy_has_discovery(policy_config)
+            except ValueError as e:
+                print(f"faro: Invalid policy discovery: {e}", file=sys.stderr)
+                sys.exit(2)
+            if has_disc:
+                try:
+                    assets = discover_generic_from_policy(
+                        policy_config,
+                        base_dir=Path(policy_path).resolve().parent,
+                    )
+                except ValueError as e:
+                    print(f"faro: Invalid policy discovery: {e}", file=sys.stderr)
+                    sys.exit(2)
+                results = _scan_assets(assets, patterns=patterns, policy_name=policy_name)
+            else:
+                results = scan_staging(patterns=patterns, policy_name=policy_name)
+        else:
+            results = scan_staging(patterns=patterns, policy_name=policy_name)
     else:
         path = args[0]
         result = scan_directory(path, patterns=patterns, policy_name=policy_name)
@@ -321,10 +372,31 @@ def cmd_report(args):
         if a == "--format" and i + 1 < len(args):
             fmt = args[i + 1]
 
-    patterns, policy_name, _ = _get_patterns(policy_path, profile)
+    patterns, policy_name, policy_config = _get_patterns(policy_path, profile)
 
     if dirs:
-        results = scan_dirs(dirs, patterns=patterns, policy_name=policy_name)
+        results = _scan_assets(
+            discover_explicit_dirs(dirs),
+            patterns=patterns, policy_name=policy_name,
+        )
+    elif policy_path:
+        try:
+            has_disc = policy_has_discovery(policy_config)
+        except ValueError as e:
+            print(f"faro: Invalid policy discovery: {e}", file=sys.stderr)
+            sys.exit(2)
+        if has_disc:
+            try:
+                assets = discover_generic_from_policy(
+                    policy_config,
+                    base_dir=Path(policy_path).resolve().parent,
+                )
+            except ValueError as e:
+                print(f"faro: Invalid policy discovery: {e}", file=sys.stderr)
+                sys.exit(2)
+            results = _scan_assets(assets, patterns=patterns, policy_name=policy_name)
+        else:
+            results = scan_staging(patterns=patterns, policy_name=policy_name)
     else:
         results = scan_staging(patterns=patterns, policy_name=policy_name)
 
