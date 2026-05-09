@@ -188,6 +188,9 @@ def _find_skill_dirs(root: Path, kind: str = "skill") -> list[Path]:
     for d in root.rglob("*"):
         if not d.is_dir() or d.name.startswith("."):
             continue
+        # v0.5.1: skip symlink directories
+        if d.is_symlink():
+            continue
         if any(ex in d.parts for ex in ("__pycache__", "node_modules", ".git")):
             continue
         if kind == "skill":

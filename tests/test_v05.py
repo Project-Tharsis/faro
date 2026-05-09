@@ -314,3 +314,52 @@ def test_old_manifest_no_owner_still_loads():
         assert entry.get("expires_at") is None
     finally:
         del os.environ["FARO_HOME"]
+
+
+# ============================================================
+# v0.5.1 regression tests
+# ============================================================
+
+def test_clean_import_no_errors():
+    """Clean 'import faro' should succeed with all dependencies."""
+    import faro
+    import faro.cli
+    import faro.patterns
+    import faro.scanner
+    import faro.reporter
+    import faro.manifest
+    import faro.staged
+    assert faro.__version__ == "0.5.0"
+
+
+def test_scan_policy_missing_value_errors():
+    """faro scan --policy (no value) should exit 2."""
+    r = _run_cli(["scan", "--policy"])
+    assert r.returncode == 2, f"Expected exit 2, got {r.returncode}"
+    assert "requires a value" in (r.stderr + r.stdout)
+
+
+def test_symlink_dir_approve_blocked():
+    """Staged symlink directory should be hard-blocked on approve."""
+    td = Path(tempfile.mkdtemp())
+    # Create a real target dir
+    real_target = td / "real-skill"
+    real_target.mkdir()
+    (real_target / "SKILL.md").write_text("# Real skill\n")
+    # Create the staging structure
+    skills_staging = td / ".hermes" / "skills-staging"
+    skills_staging.mkdir(parents=True)
+    # Create symlink in staging pointing outside
+    symlink_path = skills_staging / "evil-link"
+    symlink_path.symlink_to(real_target.resolve())
+    # Also need active dir
+    (td / ".hermes" / "skills").mkdir(parents=True)
+
+    import os
+    os.environ["FARO_HOME"] = str(td)
+    try:
+        from faro.staged import approve
+        result = approve("evil-link", kind="skill", force=True)
+        assert result is None, "Symlink dir approve should fail even with force"
+    finally:
+        del os.environ["FARO_HOME"]

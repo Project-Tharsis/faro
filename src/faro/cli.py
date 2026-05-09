@@ -22,17 +22,24 @@ KNOWN_FLAGS = {
 }
 
 
+VALUE_FLAGS = {"--policy", "--dirs", "--profile", "--kind",
+               "--owner", "--expires", "--path", "--format"}
+
+
 def _validate_args(args):
-    """Reject unknown flags. Prints to stderr and exits 2."""
+    """Reject unknown flags and missing values. Prints to stderr and exits 2."""
     unknown = []
     i = 0
     while i < len(args):
         if args[i].startswith("--"):
             if args[i] not in KNOWN_FLAGS:
                 unknown.append(args[i])
-            if args[i] in {"--policy", "--dirs", "--profile", "--kind",
-                           "--owner", "--expires", "--path", "--format"}:
+            if args[i] in VALUE_FLAGS:
                 i += 1
+                # Check: next token must exist and not be another flag
+                if i >= len(args) or args[i].startswith("--"):
+                    print(f"faro: flag {args[i-1]} requires a value", file=sys.stderr)
+                    sys.exit(2)
         i += 1
     if unknown:
         print(f"faro: unknown flag(s): {', '.join(unknown)}", file=sys.stderr)
@@ -173,29 +180,21 @@ def cmd_list(args):
 
 def cmd_approve(args):
     if not args:
-        print("Usage: faro approve <name> [--kind skill|plugin] [--force] [--owner <email>] [--expires 30d]")
+        print("Usage: faro approve <name> [--kind skill|plugin] [--force]")
         return
     name = args[0]
     kind = "skill"
     force = False
-    owner = ""
-    expires = ""
     for i, a in enumerate(args):
         if a == "--kind" and i + 1 < len(args):
             kind = args[i + 1]
         if a == "--force":
             force = True
-        if a == "--owner" and i + 1 < len(args):
-            owner = args[i + 1]
-        if a == "--expires" and i + 1 < len(args):
-            expires = args[i + 1]
+        # NOTE: --owner and --expires are v0.7 scope (manifest extension)
+        # They are accepted but not yet written to manifest.
     result = approve(name, kind=kind, force=force)
     if result is None:
         sys.exit(1)
-    if owner:
-        print(f"   Owner: {owner}")
-    if expires:
-        print(f"   Expires: {expires}")
 
 
 def cmd_reject(args):

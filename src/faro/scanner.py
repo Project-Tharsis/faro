@@ -163,7 +163,18 @@ def scan_directory(
         require_marker: If True (default), unknown dirs fail-closed with error.
                         If False (--dirs mode), allow scanning any directory.
     """
-    root = Path(path).resolve()
+    root = Path(path)
+    # v0.5.1: detect symlink directory BEFORE resolve
+    if root.is_symlink():
+        result = ScanResult(path=str(root), name=root.name, skill_type="unknown",
+                           policy_name=policy_name)
+        result.risk_level = "error"
+        result.findings.append(Finding(
+            "symlink-dir-escape", "critical", "file_access",
+            f"Symlink directory escape: {path}", str(root), 0, path, path
+        ))
+        return result
+    root = root.resolve()
     active_patterns = patterns if patterns is not None else PATTERNS
 
     # Fail closed: path must exist
@@ -282,6 +293,24 @@ def scan_directory(
                 result.findings.extend(ast_findings)
     except ImportError:
         pass
+
+    # v0.5.1: deduplicate sensitive_data_access (per matched term, first file only)
+    # This category generates high noise — one asset referencing ClickHouse/Kafka/Redis
+    # across many files can produce hundreds of identical findings.
+    _NOISY_CATEGORIES = {"sensitive_data_access"}
+    seen_terms: dict[str, set[str]] = {}
+    deduped = []
+    for f in result.findings:
+        if f.category in _NOISY_CATEGORIES:
+            key = f.pattern_id
+            if key not in seen_terms:
+                seen_terms[key] = set()
+            term = f.match
+            if term in seen_terms[key]:
+                continue  # duplicate matched term
+            seen_terms[key].add(term)
+        deduped.append(f)
+    result.findings = deduped
 
     # Risk level
     if result.findings:

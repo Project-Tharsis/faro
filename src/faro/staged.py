@@ -48,6 +48,11 @@ def approve(name: str, kind: str = "skill", force: bool = False) -> str | None:
         print(f"❌ '{name}' not found in {kind}s staging")
         return None
 
+    # v0.5.1: hard block symlink directories
+    if src.is_symlink():
+        print(f"🔴 '{name}' is a symlink directory — blocked (even with --force).")
+        return None
+
     dst = active_dir / name
     # Preserve directory nesting from staging (e.g., creative/pixel-art)
     try:
